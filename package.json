@@ -12,9 +12,10 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "GRAMMAR.md"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "eval": "vitest run test/llm-eval/eval.test.ts",
