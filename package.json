@@ -2,6 +2,7 @@
   "name": "spelllang",
   "version": "0.1.0",
   "description": "Small, safe, embeddable scripting language for LLM-generated and block-edited scripts",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

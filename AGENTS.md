@@ -28,7 +28,8 @@ changes. Human-facing overview and commands: `README.md`.
   text), `validator` (reclassifies identifiers, collects all errors),
   `builtins` (fixed helper registry), `interpreter` (fuel-bounded,
   deterministic, deep-copies at the host API edge), `host` (`SpellLang`
-  class), `prompt` (`renderPromptRegistry`).
+  class + fail-fast `SpellLangConfig` validation), `prompt`
+  (`renderPromptRegistry`).
 - Language changes must keep `GRAMMAR.md`, `EXAMPLES.md`, and the
   conformance suite in sync; keep `SPELLLANG.md` §9's repo tree accurate.
 - Style: single quotes, 2-space indent, semicolons; tests use vitest.

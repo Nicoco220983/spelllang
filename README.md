@@ -17,6 +17,58 @@ sandbox.
 pnpm install
 ```
 
+## Embedding in a host application
+
+Zero runtime dependencies, ESM, Node ≥ 20 (and modern browsers). The host
+declares its surface (callables, types, state/context shapes); scripts are
+parsed and validated up front, then executed against injected implementations.
+Malformed host config throws immediately at construction.
+
+```ts
+import { SpellLang, tEnum, tInt, tNone } from 'spelllang';
+
+const lang = new SpellLang({
+  // named enum used by callable arguments
+  types: { VoxelType: { kind: 'enum', values: ['STONE', 'DIRT', 'PLANKS'] } },
+  // persistent per-script state (deep-copied in and out of each run)
+  stateShape: { count: tInt },
+  // read-only per-invocation data
+  contextShape: { tick: tInt },
+  callables: [
+    {
+      name: 'setVoxel',
+      args: [
+        { name: 'x', type: tInt, domain: { min: -64, max: 64 } },
+        { name: 'type', type: tEnum('VoxelType') },
+      ],
+      returnType: tNone,
+      fuelCost: 1,
+      doc: 'Place one voxel.',
+    },
+  ],
+});
+
+// Text → parse → validate. Errors are machine-readable (line/col, code,
+// expected/found) — feed them back to the generating LLM to fix the script.
+const parsed = lang.parse('call setVoxel(1 + 1, STONE)');
+if (!parsed.ok) {
+  console.error(parsed.errors);
+} else {
+  // Execution is fuel-bounded and side-effect-free except through callables.
+  const result = lang.run(parsed.program, {
+    state: { count: 0 },
+    context: { tick: 42 },
+    callablesImpl: {
+      setVoxel: (args, { emit }) => emit({ op: 'setVoxel', x: args[0], type: args[1] }),
+    },
+  });
+  // result: { result, intents, state, fuelUsed, error? }
+}
+```
+
+See `SPELLLANG.md` for the full contract, `GRAMMAR.md` for the LLM-facing
+script grammar, and `test/llm-eval/tasks.ts` for a complete host example.
+
 ## Test commands
 
 ```bash
