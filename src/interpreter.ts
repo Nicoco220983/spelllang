@@ -13,6 +13,7 @@ import type {
   Limits,
   Program,
   Stmt,
+  TypeDecl,
   Value,
 } from './ast.js';
 import { BUILTINS } from './builtins.js';
@@ -33,6 +34,8 @@ export interface RunInputs {
 
 export interface RunConfig {
   callables: Map<string, CallableDecl>;
+  /** host-declared types; needed to fill omitted optional record fields with none */
+  types?: Map<string, TypeDecl>;
   limits: Limits;
 }
 
@@ -251,6 +254,19 @@ class Interpreter {
         return expr.name;
       case 'list':
         return expr.elements.map((e) => this.evalExpr(e));
+      case 'recordLit': {
+        const obj: Record<string, Value> = {};
+        // omitted optional fields become none (the runtime representation of
+        // `none` is null, matching state/context values and member access)
+        const decl = this.config.types?.get(expr.typeName);
+        if (decl && decl.kind === 'record') {
+          for (const f of decl.fields) {
+            if (f.type.kind === 'optional') obj[f.name] = null;
+          }
+        }
+        for (const f of expr.fields) obj[f.name] = this.evalExpr(f.value);
+        return obj;
+      }
       case 'var': {
         for (let i = this.scopes.length - 1; i >= 0; i--) {
           if (this.scopes[i]!.has(expr.name)) return this.scopes[i]!.get(expr.name)!;

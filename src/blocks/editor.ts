@@ -527,6 +527,25 @@ export class SpellLangEditorElement extends HTMLElementBase {
         block.append(this.renderSocket(stmt, path, [...sel, 'operand'], expr.operand, null));
         return block;
       }
+      case 'recordLit': {
+        const block = el('span', 'expr-block');
+        block.append(el('span', 'label', expr.typeName));
+        block.append(el('span', 'op', '{'));
+        const decl = this.reg.types.get(expr.typeName);
+        const fieldDecls = decl && decl.kind === 'record' ? decl.fields : [];
+        for (const f of expr.fields) {
+          const fieldBlock = el('span', 'expr-block');
+          fieldBlock.append(el('span', 'socket-name', f.name));
+          fieldBlock.append(el('span', 'label', ':'));
+          const expected = fieldDecls.find((fd) => fd.name === f.name)?.type ?? null;
+          fieldBlock.append(
+            this.renderSocket(stmt, path, [...sel, `field:${f.name}`], f.value, expected),
+          );
+          block.append(fieldBlock);
+        }
+        block.append(el('span', 'op', '}'));
+        return block;
+      }
       case 'list': {
         const block = el('span', 'expr-block list');
         block.append(el('span', 'op', '['));

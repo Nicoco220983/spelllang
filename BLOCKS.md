@@ -82,6 +82,7 @@ Rendered when the socket rule (§2) demands nested blocks:
 | `binary` | left socket · operator dropdown (`+ - * / % == != < <= > >= and or`) · right socket; committing an operator keeps both operands (the validator flags type nonsense with the usual error JSON) |
 | `unary` | `not`/`−` label + operand socket |
 | `list` | `[ ▢ − … ]` element sockets with per-element `−` and a `+ item` control |
+| `recordLit` | `TypeName { field: ▢ … }` — one labeled, typed socket per supplied field (sockets address fields by name: `field:<name>`) |
 
 ## 5. Palette composition
 
@@ -99,9 +100,10 @@ callables. Groups, in order:
 Clicking a palette item appends a fresh block to the end of the program. Fresh
 blocks are valid-by-construction: required args are pre-filled with default
 literals for their declared types (`int/float → 0`, `bool → false`,
-`string → ""`, `enum → first value`, `list → []`); types with no literal form
-(`record`, `vec`) fall back to `0`, which the validator flags as a type error
-— an explicit "fill me" state.
+`string → ""`, `enum → first value`, `list → []`, `record → TypeName { … }`
+with required fields defaulted and optional fields omitted); types with no
+literal form (`vec`, or a record whose required field has none) fall back to
+`0`, which the validator flags as a type error — an explicit "fill me" state.
 
 ## 6. Editing model & events
 

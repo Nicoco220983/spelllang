@@ -9,6 +9,36 @@ export function printProgram(program: Program): string {
   return program.statements.map((s) => printStmt(s, '')).join('\n');
 }
 
+/**
+ * True if any record literal sits in the expression tree. If/for headers
+ * cannot contain a bare `{` (it opens the body block), so the printer
+ * parenthesizes such headers — parens make the `{` unambiguous again.
+ */
+function containsRecordLit(expr: Expr): boolean {
+  switch (expr.kind) {
+    case 'recordLit':
+      return true;
+    case 'list':
+      return expr.elements.some(containsRecordLit);
+    case 'member':
+      return containsRecordLit(expr.object);
+    case 'binary':
+      return containsRecordLit(expr.left) || containsRecordLit(expr.right);
+    case 'unary':
+      return containsRecordLit(expr.operand);
+    case 'callBuiltin':
+      return expr.args.some(containsRecordLit);
+    default:
+      return false;
+  }
+}
+
+/** An if-condition or for-iterable: parenthesized when it holds a record literal. */
+function printHeaderExpr(expr: Expr): string {
+  const s = printExpr(expr);
+  return containsRecordLit(expr) ? `(${s})` : s;
+}
+
 function printStmt(stmt: Stmt, indent: string): string {
   switch (stmt.kind) {
     case 'call':
@@ -24,7 +54,7 @@ function printStmt(stmt: Stmt, indent: string): string {
       stmt.branches.forEach((branch, i) => {
         const kw = i === 0 ? 'if' : 'else if';
         parts.push(
-          `${indent}${kw} ${printExpr(branch.cond)} {`,
+          `${indent}${kw} ${printHeaderExpr(branch.cond)} {`,
           ...branch.body.map((s) => printStmt(s, indent + '  ')),
           `${indent}}`,
         );
@@ -40,7 +70,7 @@ function printStmt(stmt: Stmt, indent: string): string {
     }
     case 'for':
       return [
-        `${indent}for ${stmt.variable} of ${printExpr(stmt.iterable)} {`,
+        `${indent}for ${stmt.variable} of ${printHeaderExpr(stmt.iterable)} {`,
         ...stmt.body.map((s) => printStmt(s, indent + '  ')),
         `${indent}}`,
       ].join('\n');
@@ -116,6 +146,9 @@ export function printExpr(expr: Expr): string {
       return expr.name;
     case 'list':
       return `[${expr.elements.map(printExpr).join(', ')}]`;
+    case 'recordLit':
+      // field order is preserved from the source AST (round-trip contract)
+      return `${expr.typeName} {${expr.fields.map((f) => `${f.name}: ${printExpr(f.value)}`).join(', ')}}`;
     case 'var':
       return expr.name;
     case 'stateField':

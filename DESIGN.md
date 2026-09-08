@@ -66,7 +66,17 @@ unary    := "-" unary | postfix
 postfix  := primary ("." IDENT | "(" args ")")*
 primary  := NUMBER | STRING | "true" | "false" | IDENT
           | "[" (expr ("," expr)* ","?)? "]" | "(" expr ")"
+          | IDENT "{" (IDENT ":" expr ("," | newline)*)? "}"
 ```
+
+The last production is the **record literal**: `IDENT {` followed by
+`name: expr` pairs (trailing comma allowed) constructs a value of a
+host-declared record type. Fields may appear in any order and optional
+fields may be omitted. Disambiguation: in an `if`/`else if` condition or a
+`for` iterable the first `{` always opens the body block, so a record
+literal there must be parenthesized (`if (Opts {n: 1}) == o { ... }`); the
+printer adds those parens automatically. Everywhere else (`let` values,
+call args, nested expressions) `IDENT {` is unambiguous.
 
 Identifier resolution (in order): local variable → `state` field →
 context field → enum literal → validation error "unknown identifier".
@@ -90,7 +100,7 @@ callables only.
 | string | `"text"` | opaque |
 | enum | `DIRT` | host-registered |
 | list | `[1, 2, 3]` | homogeneous element type inferred; max length from host type decl or static literal length |
-| object | (never literal) | host-declared records, values arrive via `state`/`context`/callables |
+| object | `Opts { count: 5 }` | host-declared records; literal fields in any order, omitted optional fields become `none` |
 
 ## 2. AST
 
@@ -113,6 +123,8 @@ type Expr =
   | { kind: 'bool', value: boolean }
   | { kind: 'enum', name: string }
   | { kind: 'list', elements: Expr[] }
+  | { kind: 'recordLit', typeName: string,
+      fields: { name: string; value: Expr; loc: Loc }[] }
   | { kind: 'var', name: string }
   | { kind: 'stateField', field: string }                  // desugared from state.<f>
   | { kind: 'contextField', field: string }                // reclassified from bare var
@@ -172,6 +184,17 @@ errors, never stops at the first.
    compatible; `if` conditions are bool; `for` iterates a list.
 3. **Value domains** (callable args): enum membership, numeric ranges,
    non-null where declared.
+   Record literals: the type name must name a declared record type
+   (`unknown-type`, with declared record names as candidates), field names
+   must be declared (`unknown-field`, declared field names as candidates,
+   duplicates rejected), each supplied field must be assignable to its
+   declared type, and all required (non-`optional`) fields must be present
+   (`missing-fields`, listing them). Omitted optional fields become `none`.
+   The literal's own type is `record <typeName>` — no inference machinery,
+   and `checkArgs` is unchanged. Rationale: this gives hosts named,
+   skippable "options bag" arguments (`call spawn_wave(SpawnOpts {
+   count: 5 })`) without a kwargs syntax, and reuses the existing record
+   type/member-access machinery end to end.
 4. **Bounds**: list length ≤ `limits.maxListLength` (default 4096) —
    checked statically for literals and constant `range` bounds, at runtime
    otherwise (`runtime-error`); `state` slot count ≤ `limits.stateSlots`

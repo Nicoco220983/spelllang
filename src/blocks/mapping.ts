@@ -70,6 +70,8 @@ function countCalls(expr: Expr): number {
       return countCalls(expr.object);
     case 'list':
       return expr.elements.reduce((n, e) => n + countCalls(e), 0);
+    case 'recordLit':
+      return expr.fields.reduce((n, f) => n + countCalls(f.value), 0);
     default:
       return 0;
   }
@@ -88,6 +90,8 @@ function hasMemberOnCall(expr: Expr): boolean {
       return hasMemberOnCall(expr.operand);
     case 'list':
       return expr.elements.some(hasMemberOnCall);
+    case 'recordLit':
+      return expr.fields.some((f) => hasMemberOnCall(f.value));
     default:
       return false;
   }
@@ -159,8 +163,9 @@ export function socketView(expr: Expr, expected: Type | null, reg: Registry): So
 
 /**
  * A valid-by-construction default literal for `type`, or null when the type
- * has no literal form (records, vec) — callers then fall back to `num 0`,
- * which the validator flags with a type error (an honest "fill me" state).
+ * has no literal form (vec, or a record whose required field has none) —
+ * callers then fall back to `num 0`, which the validator flags with a type
+ * error (an honest "fill me" state).
  */
 export function defaultExprFor(type: Type, reg: Registry): Expr | null {
   switch (type.kind) {
@@ -177,6 +182,19 @@ export function defaultExprFor(type: Type, reg: Registry): Expr | null {
     }
     case 'list':
       return listLit([]);
+    case 'record': {
+      // a literal with required fields defaulted and optional fields omitted
+      const decl = reg.types.get(type.name);
+      if (!decl || decl.kind !== 'record') return null;
+      const fields: { name: string; value: Expr; loc: typeof genLoc }[] = [];
+      for (const f of decl.fields) {
+        if (f.type.kind === 'optional') continue;
+        const value = defaultExprFor(f.type, reg);
+        if (!value) return null;
+        fields.push({ name: f.name, value, loc: genLoc });
+      }
+      return { kind: 'recordLit', typeName: type.name, fields, loc: genLoc };
+    }
     case 'optional':
       return null; // optional args start omitted
     default:
@@ -328,6 +346,7 @@ export type ExprSel =
   | 'iterable'
   | `arg:${number}`
   | `elem:${number}`
+  | `field:${string}`
   | 'object'
   | 'left'
   | 'right'
@@ -352,6 +371,9 @@ function childExpr(c: ExprContainer, sel: ExprSel): Expr | null {
   const e = c.expr;
   if (sel.startsWith('arg:')) return e.kind === 'callBuiltin' ? (e.args[Number(sel.slice(4))] ?? null) : null;
   if (sel.startsWith('elem:')) return e.kind === 'list' ? (e.elements[Number(sel.slice(5))] ?? null) : null;
+  if (sel.startsWith('field:')) {
+    return e.kind === 'recordLit' ? (e.fields.find((f) => f.name === sel.slice(6))?.value ?? null) : null;
+  }
   switch (sel) {
     case 'object':
       return e.kind === 'member' ? e.object : null;
@@ -404,6 +426,14 @@ function withChildExpr(c: ExprContainer, sel: ExprSel, next: Expr): ExprContaine
     const i = Number(sel.slice(5));
     if (i >= e.elements.length) return c;
     return { kind: 'expr', expr: { ...e, elements: e.elements.map((a, j) => (j === i ? next : a)) } };
+  }
+  if (sel.startsWith('field:') && e.kind === 'recordLit') {
+    const name = sel.slice(6);
+    if (!e.fields.some((f) => f.name === name)) return c;
+    return {
+      kind: 'expr',
+      expr: { ...e, fields: e.fields.map((f) => (f.name === name ? { ...f, value: next } : f)) },
+    };
   }
   switch (sel) {
     case 'object':

@@ -27,6 +27,15 @@ function runtime() {
     ],
     contextShape: { tick: tInt },
     stateShape: { n: tInt },
+    types: {
+      SpawnOpts: {
+        kind: 'record',
+        fields: [
+          { name: 'count', type: tInt },
+          { name: 'mode', type: { kind: 'optional', inner: { kind: 'string' } } },
+        ],
+      },
+    },
   });
 }
 
@@ -47,6 +56,9 @@ describe('conformance: invalid programs are rejected with localized errors', () 
     ['import attempt', 'import things'],
     ['missing brace', 'if true {\n stop'],
     ['unclosed paren', 'call setVoxel(1, 2, 3'],
+    ['record literal unknown type', 'let o = NoSuchType { count: 5 }'],
+    ['record literal unknown field', 'let o = SpawnOpts { count: 5, nosuch: 1 }'],
+    ['record literal missing required field', 'let o = SpawnOpts { mode: "x" }'],
   ];
 
   it.each(cases)('rejects: %s', (_name, text) => {
@@ -85,6 +97,13 @@ describe('conformance: every error carries line/col (property)', () => {
       ),
       { numRuns: 200 },
     );
+  });
+});
+
+describe('conformance: record literals', () => {
+  it('accepts a valid record literal (any field order, omitted optionals)', () => {
+    const r = runtime().parse('let o = SpawnOpts { mode: "calm", count: 2 }\nlet p = SpawnOpts { count: 1 }');
+    expect(r.ok).toBe(true);
   });
 });
 

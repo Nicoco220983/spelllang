@@ -40,14 +40,34 @@ function makeRuntime(limits?: { fuel?: number; maxResults?: number; maxListLengt
         fuelCost: 1,
         doc: 'Emits an intent.',
       },
+      {
+        name: 'spawnWave',
+        args: [{ name: 'opts', type: { kind: 'record', name: 'SpawnOpts' } }],
+        returnType: { kind: 'none' },
+        fuelCost: 1,
+        doc: 'Spawn a wave from an options record.',
+      },
     ],
-    types: { VoxelType: { kind: 'enum', values: ['STONE', 'TORCH'] } },
+    types: {
+      VoxelType: { kind: 'enum', values: ['STONE', 'TORCH'] },
+      SpawnOpts: {
+        kind: 'record',
+        fields: [
+          { name: 'count', type: tInt },
+          { name: 'delay', type: { kind: 'optional', inner: tInt } },
+          { name: 'mode', type: { kind: 'optional', inner: { kind: 'string' } } },
+        ],
+      },
+    },
     stateShape: { counter: tInt },
     contextShape: { base: tInt },
     limits,
   });
   const impl = {
     setVoxel: (args: Value[]) => {
+      placed.push(args);
+    },
+    spawnWave: (args: Value[]) => {
       placed.push(args);
     },
     boom: () => {
@@ -197,6 +217,24 @@ describe('interpreter', () => {
       [10, 0, 0, 'TORCH'],
       [11, 0, 0, 'TORCH'],
     ]);
+  });
+
+  it('evaluates record literals, filling omitted optional fields with none', () => {
+    const { rt, impl, placed } = makeRuntime();
+    const r = rt.parse('call spawnWave(SpawnOpts { mode: "nightmare", count: 5 })');
+    expect(r.ok).toBe(true);
+    const exec = rt.run(r.program!, { callablesImpl: impl });
+    expect(exec.result).toBe('ok');
+    expect(placed).toEqual([[{ count: 5, delay: null, mode: 'nightmare' }]]);
+  });
+
+  it('fills all omitted optional fields with none', () => {
+    const { rt, impl, placed } = makeRuntime();
+    const r = rt.parse('call spawnWave(SpawnOpts { count: 3 })');
+    expect(r.ok).toBe(true);
+    const exec = rt.run(r.program!, { callablesImpl: impl });
+    expect(exec.result).toBe('ok');
+    expect(placed).toEqual([[{ count: 3, delay: null, mode: null }]]);
   });
 
   it('round is ties-away-from-zero', () => {

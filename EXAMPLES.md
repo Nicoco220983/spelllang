@@ -76,6 +76,22 @@ for i of range(0, 5) {
 }
 ```
 
+## 6. Options bag — record literal argument
+
+The host declares `SpawnOpts { count: int, delay: optional int, mode: optional string }`
+and a callable taking it. Fields can be in any order; omitted optional
+fields arrive as `none`.
+
+```spelllang
+// Spawn two waves; the second leaves delay and mode at none
+call spawn_wave(SpawnOpts { count: 5, mode: "nightmare" })
+call spawn_wave(SpawnOpts { count: 3 })
+```
+
+Inside an `if` condition or `for` iterable, wrap the literal in parentheses
+(`if (SpawnOpts { count: 5 }).count > 3 { ... }`) — a bare `{` there opens
+the body block.
+
 ## Deliberate errors (for retry-loop testing)
 
 ```spelllang

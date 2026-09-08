@@ -14,6 +14,15 @@ const vec3: TypeDecl = {
   ],
 };
 
+const spawnOpts: TypeDecl = {
+  kind: 'record',
+  fields: [
+    { name: 'count', type: tInt },
+    { name: 'delay', type: { kind: 'optional', inner: tInt } },
+    { name: 'mode', type: { kind: 'optional', inner: { kind: 'string' } } },
+  ],
+};
+
 function makeRuntime() {
   return new SpellLang({
     callables: [
@@ -38,11 +47,20 @@ function makeRuntime() {
         doc: 'Nearest entity of a kind, or none.',
         category: 'query',
       },
+      {
+        name: 'spawnWave',
+        args: [{ name: 'opts', type: tRecord('SpawnOpts') }],
+        returnType: { kind: 'none' },
+        fuelCost: 2,
+        doc: 'Spawn a wave.',
+        category: 'world',
+      },
     ],
     types: {
       VoxelType: VOXEL_ENUM,
       EntityKind: { kind: 'enum', values: ['goblin', 'player'] },
       entity: vec3,
+      SpawnOpts: spawnOpts,
     },
     stateShape: { anger: tInt, awake: tBool },
     contextShape: { player: tRecord('entity'), goblins: { kind: 'list', elem: tRecord('entity') } as Type },
@@ -162,5 +180,54 @@ if distance(p, player) < 5 {
     const ok = rt.parse('let d = distance(player, player)');
     expect(ok.ok).toBe(true);
     void r;
+  });
+
+  it('accepts a record literal with fields in any order and omitted optionals', () => {
+    const r = rt.parse('call spawnWave(SpawnOpts { mode: "nightmare", count: 5 })');
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+    const r2 = rt.parse('call spawnWave(SpawnOpts { count: 3 })');
+    expect(r2.ok).toBe(true);
+  });
+
+  it('rejects record literals of unknown record types with suggestions', () => {
+    const r = rt.parse('call spawnWave(SpwanOpts { count: 5 })');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({
+      code: 'unknown-type',
+      found: 'SpwanOpts',
+    });
+    expect(r.errors[0]!.expected).toContain('SpawnOpts');
+  });
+
+  it('rejects unknown record fields with declared-name suggestions', () => {
+    const r = rt.parse('call spawnWave(SpawnOpts { count: 5, mdoe: "x" })');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({
+      code: 'unknown-field',
+      found: 'mdoe',
+    });
+    expect(r.errors[0]!.expected).toEqual(['count', 'delay', 'mode']);
+  });
+
+  it('rejects record literals missing required fields, listing them', () => {
+    const r = rt.parse('call spawnWave(SpawnOpts { mode: "x" })');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({
+      code: 'missing-fields',
+      found: undefined,
+    });
+    expect(r.errors[0]!.expected).toEqual(['count']);
+    expect(r.errors[0]!.message).toContain('count');
+  });
+
+  it('rejects duplicate fields and mistyped field values in record literals', () => {
+    const dup = rt.parse('call spawnWave(SpawnOpts { count: 5, count: 6 })');
+    expect(dup.ok).toBe(false);
+    expect(dup.errors.some((e) => e.code === 'duplicate-field')).toBe(true);
+    const bad = rt.parse('call spawnWave(SpawnOpts { count: "five" })');
+    expect(bad.ok).toBe(false);
+    expect(bad.errors[0]).toMatchObject({ code: 'type-mismatch' });
+    expect(bad.errors[0]!.message).toContain("field 'count'");
   });
 });

@@ -219,6 +219,7 @@ export class SpellLang {
   run(program: Program, inputs: RunInputs): ExecResult {
     return run(program, inputs, {
       callables: this.registry.callables,
+      types: this.registry.types,
       limits: this.registry.limits,
     });
   }

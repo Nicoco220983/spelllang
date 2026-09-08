@@ -212,7 +212,12 @@ set is fixed:
 - Values: numbers (int/float distinction matches host types), booleans,
   strings (opaque: no ops beyond equality and passing to callables), enums
   (host-registered), lists, and objects (host-declared records with named
-  fields — no classes, no components, no methods).
+  fields — no classes, no components, no methods). Scripts construct
+  objects with record literals (`TypeName { field: expr, ... }`, fields in
+  any order, optional fields omittable) for named, self-documenting
+  "options bag" arguments; no kwargs syntax exists. In an unparenthesized
+  if condition or for iterable, `{` after the condition opens the body, so a
+  record literal there must be parenthesized: `if (T { ... }).field > 0 {`.
 - Arithmetic `+ - * / %`, comparison `< <= == != >= >`, logic `and or not`,
   parentheses. Short-circuit semantics fixed and documented.
 - A **small fixed library** of pure helpers (host cannot add expression

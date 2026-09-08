@@ -112,6 +112,13 @@ export type Expr =
   | { kind: 'bool'; value: boolean; loc: Loc }
   | { kind: 'enum'; name: string; loc: Loc }
   | { kind: 'list'; elements: Expr[]; loc: Loc }
+  /** construct a host-declared record: `TypeName { field: expr, ... }` */
+  | {
+      kind: 'recordLit';
+      typeName: string;
+      fields: { name: string; value: Expr; loc: Loc }[];
+      loc: Loc;
+    }
   | { kind: 'var'; name: string; loc: Loc }
   | { kind: 'stateField'; field: string; loc: Loc }
   | { kind: 'contextField'; field: string; loc: Loc }

@@ -34,6 +34,9 @@ const numGen = fc.oneof(
 
 const builtinNameGen = fc.constantFrom(...BUILTINS.map((b) => b.name));
 
+// record type names start uppercase (convention; the parser accepts any ident)
+const typeNameGen = fc.stringMatching(/^[A-Z][A-Za-z0-9_]*$/);
+
 const strGen = fc.string({ minLength: 0, maxLength: 10 }).filter((s) => !/["\\\n\t]/.test(s));
 
 const exprGen: fc.Arbitrary<Expr> = fc.letrec((tie) => ({
@@ -52,6 +55,23 @@ const exprGen: fc.Arbitrary<Expr> = fc.letrec((tie) => ({
     fc
       .array(tie('expr') as fc.Arbitrary<Expr>, { minLength: 0, maxLength: 3 })
       .map((elements) => ({ kind: 'list', elements, loc }) as Expr),
+    fc
+      .tuple(
+        typeNameGen,
+        fc.array(
+          fc.tuple(identGen, tie('expr') as fc.Arbitrary<Expr>),
+          { minLength: 0, maxLength: 3 },
+        ),
+      )
+      .map(
+        ([typeName, fields]) =>
+          ({
+            kind: 'recordLit',
+            typeName,
+            fields: fields.map(([name, value]) => ({ name, value, loc })),
+            loc,
+          }) as Expr,
+      ),
     fc
       .tuple(tie('expr') as fc.Arbitrary<Expr>, fc.constantFrom('+', '-', '*', '/', '%', '==', '!=', '<', '<=', '>', '>=', 'and', 'or'))
       .map(([left, op]) => ({ kind: 'binary', op, left, right: { kind: 'num', value: 1, isInt: true, loc }, loc }) as Expr),

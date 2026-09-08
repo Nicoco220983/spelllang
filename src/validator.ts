@@ -243,6 +243,8 @@ class Validator {
         }
         return { kind: 'enum', name: typeName };
       }
+      case 'recordLit':
+        return this.checkRecordLit(expr);
       case 'list': {
         if (expr.elements.length > this.reg.limits.maxListLength) {
           this.error(expr.loc, 'list-too-large', `List literal has ${expr.elements.length} elements (max ${this.reg.limits.maxListLength}).`, [String(this.reg.limits.maxListLength)], String(expr.elements.length));
@@ -298,6 +300,63 @@ class Validator {
         return decl.returnType;
       }
     }
+  }
+
+  /**
+   * A record literal constructs a value of a host-declared record type.
+   * Field names must be declared (suggestions on mismatch), each supplied
+   * field must be assignable to its declared type, and every required
+   * (non-optional) field must be present. Omitted optional fields become
+   * `none` at runtime (the interpreter fills them). The node's own type is
+   * simply `record <typeName>` — no inference involved.
+   */
+  private checkRecordLit(expr: Extract<Expr, { kind: 'recordLit' }>): Type {
+    const decl = this.reg.types.get(expr.typeName);
+    if (!decl || decl.kind !== 'record') {
+      const recordNames = [...this.reg.types.entries()]
+        .filter(([, d]) => d.kind === 'record')
+        .map(([n]) => n);
+      this.error(
+        expr.loc,
+        'unknown-type',
+        `Unknown record type '${expr.typeName}'. Record types are declared by the host.`,
+        recordNames,
+        expr.typeName,
+      );
+      for (const f of expr.fields) this.checkExpr(f.value);
+      return { kind: 'record', name: expr.typeName };
+    }
+    const seen = new Set<string>();
+    for (const f of expr.fields) {
+      const fieldDecl = decl.fields.find((fd) => fd.name === f.name);
+      if (!fieldDecl) {
+        this.error(
+          f.loc,
+          'unknown-field',
+          `Record '${expr.typeName}' has no field '${f.name}'. Fields are declared by the host.`,
+          decl.fields.map((fd) => fd.name),
+          f.name,
+        );
+        this.checkExpr(f.value);
+        continue;
+      }
+      if (seen.has(f.name)) {
+        this.error(f.loc, 'duplicate-field', `Duplicate field '${f.name}' in '${expr.typeName}' literal.`, undefined, f.name);
+      }
+      seen.add(f.name);
+      const t = this.checkExpr(f.value);
+      this.requireAssignable(f.value.loc, t, fieldDecl.type, `field '${f.name}' of '${expr.typeName}'`);
+    }
+    const missing = decl.fields.filter((fd) => fd.type.kind !== 'optional' && !seen.has(fd.name));
+    if (missing.length > 0) {
+      this.error(
+        expr.loc,
+        'missing-fields',
+        `'${expr.typeName}' literal is missing required field(s): ${missing.map((m) => m.name).join(', ')}.`,
+        missing.map((m) => m.name),
+      );
+    }
+    return { kind: 'record', name: expr.typeName };
   }
 
   /**

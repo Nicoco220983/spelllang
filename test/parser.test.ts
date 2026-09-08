@@ -72,6 +72,65 @@ let x = [1, 2, 3,]`);
     expect(parse('let x = not true').ok).toBe(true);
     expect(parse('let x = -a.b').ok).toBe(true);
   });
+
+  it('parses a record literal with fields in any order', () => {
+    const r = parse('let opts = SpawnOpts { mode: "nightmare", count: 5 }');
+    expect(r.ok).toBe(true);
+    const stmt = r.program!.statements[0]!;
+    if (stmt.kind === 'let') {
+      expect(stmt.value).toMatchObject({
+        kind: 'recordLit',
+        typeName: 'SpawnOpts',
+        fields: [
+          { name: 'mode', value: { kind: 'str', value: 'nightmare' } },
+          { name: 'count', value: { kind: 'num', value: 5, isInt: true } },
+        ],
+      });
+    }
+  });
+
+  it('parses an empty record literal and a trailing comma', () => {
+    expect(parse('let e = Empty {}').ok).toBe(true);
+    const r = parse('let o = SpawnOpts { count: 5, }');
+    expect(r.ok).toBe(true);
+  });
+
+  it('parses multiline record literals', () => {
+    const r = parse(`let opts = SpawnOpts {
+  count: 5,
+  mode: "nightmare",
+}`);
+    expect(r.ok).toBe(true);
+  });
+
+  it('parses record literals with arbitrary expressions as field values', () => {
+    const r = parse('let opts = SpawnOpts { count: 1 + 2, at: player.pos }');
+    expect(r.ok).toBe(true);
+    const stmt = r.program!.statements[0]!;
+    if (stmt.kind === 'let' && stmt.value.kind === 'recordLit') {
+      expect(stmt.value.fields[0]!.value).toMatchObject({ kind: 'binary', op: '+' });
+      expect(stmt.value.fields[1]!.value).toMatchObject({ kind: 'member', field: 'pos' });
+    }
+  });
+
+  it('keeps `{` after an if/for header as the body block, not a record literal', () => {
+    const r = parse('if ready {\n  call f()\n} else if set {\n  call g()\n}\nfor i of items {\n  call h(i)\n}');
+    expect(r.ok).toBe(true);
+    const stmt = r.program!.statements[0]!;
+    if (stmt.kind === 'if') {
+      expect(stmt.branches[0]!.cond).toMatchObject({ kind: 'var', name: 'ready' });
+      expect(stmt.branches[1]!.cond).toMatchObject({ kind: 'var', name: 'set' });
+    }
+    const loop = r.program!.statements[1]!;
+    if (loop.kind === 'for') {
+      expect(loop.iterable).toMatchObject({ kind: 'var', name: 'items' });
+    }
+  });
+
+  it('parses a record literal inside parentheses in an if condition', () => {
+    const r = parse('let o = SpawnOpts { count: 5 }\nif (o) == o {\n  stop\n}');
+    expect(r.ok).toBe(true);
+  });
 });
 
 describe('parser: errors are localized and multiple', () => {
@@ -103,6 +162,15 @@ describe('parser: errors are localized and multiple', () => {
   it('rejects calling a non-builtin in expression position', () => {
     const r = parse('let x = setVoxel(0, 0, 0, DIRT)');
     expect(r.ok).toBe(false);
+  });
+
+  it('rejects record literals with missing colon or value', () => {
+    const r1 = parse('let x = T { count 5 }');
+    expect(r1.ok).toBe(false);
+    const r2 = parse('let x = T { count: }');
+    expect(r2.ok).toBe(false);
+    const r3 = parse('let x = T { count: 5');
+    expect(r3.ok).toBe(false);
   });
 
   it('rejects empty program only with a warning-free ok', () => {

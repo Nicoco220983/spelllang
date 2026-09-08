@@ -18,8 +18,12 @@ no imports, no user-defined functions — only what is listed below.
 - enums: UPPER_SNAKE names from the host registry (e.g. STONE). Never invent
   them; use only values the host lists.
 - lists: [1, 2, 3] — all elements the same type. Iterate with for; never index.
-- objects: host records, accessed with a dot: goblin.hp. No methods, no
-  creating objects.
+- objects: host records, accessed with a dot: goblin.hp. No methods.
+  Construct one with a record literal: TypeName { count: 5, mode: "hard" } —
+  fields in any order, optional fields may be omitted (they become none),
+  unknown names are errors. Type and field names come from the host registry.
+  Inside an if condition or for iterable, a record literal must be wrapped in
+  parentheses: if (SpawnOpts { count: 5 }).count > 3 { ... }
 
 == STATEMENTS (every statement starts with a keyword) ==
 call name(arg1, arg2, ...)     do something (see AVAILABLE FUNCTIONS)

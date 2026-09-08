@@ -168,7 +168,7 @@ function tokenize(text: string): { tokens: Token[]; errors: SpellError[] } {
       tokens.push({ kind: 'string', text: value, loc: l });
       continue;
     }
-    if ('{}()[],;.=!<>+-*/%'.includes(ch)) {
+    if ('{}()[],;.=!<>:+-*/%'.includes(ch)) {
       const l = loc();
       tokens.push({ kind: 'punct', text: advance(), loc: l });
       continue;
@@ -246,6 +246,13 @@ export function parseExpression(text: string): ExprParseResult {
 class Parser {
   pos = 0;
   errors: SpellError[] = [];
+  /**
+   * > 0 while parsing an if/else-if condition or a for iterable: there the
+   * first `{` belongs to the body block, never to a record literal, so
+   * `IDENT {` must not start one. Parenthesized sub-expressions reset this
+   * (inside `( )` a `{` is unambiguous).
+   */
+  private headerDepth = 0;
 
   constructor(
     private tokens: Token[],
@@ -489,11 +496,14 @@ class Parser {
   parseIf(): Stmt {
     const kw = this.next(); // 'if'
     const branches: { cond: Expr; body: Stmt[] }[] = [];
-    const cond = this.parseExpr();
-    const body = this.parseBlock();
-    branches.push({ cond, body });
     let elseBody: Stmt[] | null = null;
     for (;;) {
+      // in the header, `{` opens the body block — not a record literal
+      this.headerDepth++;
+      const cond = this.parseExpr();
+      this.headerDepth--;
+      const body = this.parseBlock();
+      branches.push({ cond, body });
       // `else` may sit on the same line as `}` or on the following line;
       // it is unambiguous (reserved word), so skip newlines to find it.
       // If there is no else, rewind so expectTerminator sees the newlines.
@@ -506,10 +516,7 @@ class Parser {
       this.next();
       if (this.atIdent('if')) {
         this.next();
-        const c = this.parseExpr();
-        const b = this.parseBlock();
-        branches.push({ cond: c, body: b });
-        continue;
+        continue; // parse the else-if condition + block as the next branch
       }
       elseBody = this.parseBlock();
       break;
@@ -534,7 +541,9 @@ class Parser {
       });
     }
     this.next(); // 'of'
+    this.headerDepth++;
     const iterable = this.parseExpr();
+    this.headerDepth--;
     const body = this.parseBlock();
     const loc = kw.loc;
     this.expectTerminator();
@@ -736,12 +745,19 @@ class Parser {
         });
       }
       this.next();
+      if (this.atPunct('{') && this.headerDepth === 0) {
+        return this.parseRecordLiteral(t.text, t.loc);
+      }
       return { kind: 'var', name: t.text, loc: t.loc };
     }
     if (t.kind === 'punct' && t.text === '(') {
       this.next();
       this.skipNewlines();
+      // inside parens a `{` can only be a record literal, never a block
+      const saved = this.headerDepth;
+      this.headerDepth = 0;
       const expr = this.parseExpr();
+      this.headerDepth = saved;
       this.skipNewlines();
       this.expectPunct(')');
       return expr;
@@ -779,6 +795,38 @@ class Parser {
     }
     this.expectPunct(']');
     return { kind: 'list', elements, loc: open.loc };
+  }
+
+  /**
+   * Record literal: IDENT '{' (IDENT ':' expr (',' | newline)*)? '}'.
+   * Field names may be lowercase; the type-name lookup happens in the
+   * validator. In if/for headers `IDENT {` stays a plain identifier followed
+   * by the body block (see `headerDepth`).
+   */
+  parseRecordLiteral(typeName: string, loc: Loc): Expr {
+    this.expectPunct('{');
+    const fields: { name: string; value: Expr; loc: Loc }[] = [];
+    this.skipNewlines();
+    if (this.atPunct('}')) {
+      this.next();
+      return { kind: 'recordLit', typeName, fields, loc };
+    }
+    for (;;) {
+      const name = this.expectIdent();
+      this.expectPunct(':');
+      const value = this.parseExpr();
+      fields.push({ name: name.text, value, loc: name.loc });
+      this.skipNewlines();
+      if (this.atPunct(',')) {
+        this.next();
+        this.skipNewlines();
+        if (this.atPunct('}')) break; // trailing comma
+        continue;
+      }
+      break;
+    }
+    this.expectPunct('}');
+    return { kind: 'recordLit', typeName, fields, loc };
   }
 }
 
