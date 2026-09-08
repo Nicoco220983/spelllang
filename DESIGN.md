@@ -252,11 +252,13 @@ const exec = runtime.run(parsed.program!, {
 `renderPromptRegistry(callables)` renders declarations (signature + one-line
 doc + value domains) for system prompts, per `SPELLLANG.md` §7.
 
-## 8. Block surface — dual rendering (later evolution, NOT in first implementation)
+## 8. Block surface — dual rendering (implemented)
 
-> Status: specified now so the AST/text design stays compatible; implemented
-> in a later milestone after the LLM path is validated. The first
-> implementation ships text ⇄ AST only.
+> Status: implemented as the `<spelllang-editor>` web component
+> (`spelllang/blocks`, zero dependencies) with the formal node⇄block mapping
+> in `BLOCKS.md`. The rule below is normative; `src/blocks/mapping.ts` is the
+> reference implementation and the property tests in
+> `test/blocks.roundtrip.property.test.ts` pin its idempotence.
 
 Each expression socket in a block renders as **inline editable text** or
 **nested blocks**, decided by a deterministic, spec-fixed function of the AST

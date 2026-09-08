@@ -69,6 +69,29 @@ if (!parsed.ok) {
 See `SPELLLANG.md` for the full contract, `GRAMMAR.md` for the LLM-facing
 script grammar, and `test/llm-eval/tasks.ts` for a complete host example.
 
+## Block editor (browser)
+
+`spelllang/blocks` ships a zero-dependency `<spelllang-editor>` web component
+(block surface spec: `BLOCKS.md`). The palette is the grammar: it derives from
+the same host config, so hosts hide blocks by not registering callables. The
+AST is the single source of truth — every edit re-validates and fires a
+`change` event.
+
+```ts
+import 'spelllang/blocks'; // defines <spelllang-editor>
+
+const editor = document.querySelector('spelllang-editor');
+editor.config = { callables, types, stateShape, contextShape };
+editor.program = parsed.program;
+editor.addEventListener('change', (e) => {
+  // e.detail: { program, text, errors } — errors is empty when valid
+  save(e.detail.program);
+});
+```
+
+Open `demo/blocks.html` after `pnpm build` for a live demo (a small voxel-world
+config wired into the editor).
+
 ## Test commands
 
 ```bash

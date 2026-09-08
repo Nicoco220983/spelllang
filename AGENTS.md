@@ -17,11 +17,16 @@ changes. Human-facing overview and commands: `README.md`.
   `test/llm-eval/` (the two older test files are not yet strict-clean;
   that is known and pre-existing)
 - `pnpm build` — ESM output + declarations in `dist/`
+- `pnpm demo` — serve `demo/blocks.html` at http://127.0.0.1:8177
+  (no-op if already running; `PORT=xxxx` to override). Uses
+  `scripts/serve-demo.mjs`, which sends `Cache-Control: no-store` so a
+  rebuilt `dist/` is picked up on a plain refresh.
 
 ## Conventions
 
 - ESM only (`"type": "module"`), TypeScript, Node >= 20, **zero runtime
   deps** — use global `fetch`; do not add dependencies without asking.
+  (`happy-dom` is a devDependency for the block-editor DOM tests only.)
 - Every AST node carries `loc: {line, col}`; the AST is plain JSON and is
   the stable contract (text and block UI are replaceable serializations).
 - `src/` layout: `ast`, `parser` (registry-free), `printer` (canonical
@@ -29,7 +34,10 @@ changes. Human-facing overview and commands: `README.md`.
   `builtins` (fixed helper registry), `interpreter` (fuel-bounded,
   deterministic, deep-copies at the host API edge), `host` (`SpellLang`
   class + fail-fast `SpellLangConfig` validation), `prompt`
-  (`renderPromptRegistry`).
+  (`renderPromptRegistry`), `blocks/` (block surface behind the
+  `spelllang/blocks` subpath: `<spelllang-editor>` custom element +
+  pure `mapping.ts` core). The main entry must stay DOM-free — browser-only
+  code lives in `blocks/`; block UI changes must keep `BLOCKS.md` in sync.
 - Language changes must keep `GRAMMAR.md`, `EXAMPLES.md`, and the
   conformance suite in sync; keep `SPELLLANG.md` §9's repo tree accurate.
 - Style: single quotes, 2-space indent, semicolons; tests use vitest.

@@ -213,6 +213,36 @@ export function parse(text: string): ParseResult {
   return { ok: true, program: program(statements), errors: [] };
 }
 
+export interface ExprParseResult {
+  ok: boolean;
+  expr?: Expr;
+  errors: SpellError[];
+}
+
+/**
+ * Parse a single expression (used by the block UI's socket text fields).
+ * Registry-free like `parse`: bare identifiers stay `var` until validation.
+ */
+export function parseExpression(text: string): ExprParseResult {
+  const { tokens, errors } = tokenize(text);
+  const p = new Parser(tokens, errors);
+  p.skipNewlines();
+  let expr: Expr;
+  try {
+    expr = p.parseExpr();
+  } catch (e) {
+    if (e instanceof ParseFailure) {
+      return { ok: false, errors: [...errors, e.error] };
+    }
+    throw e;
+  }
+  p.skipNewlines();
+  p.expectEnd();
+  const allErrors = [...errors, ...p.errors];
+  if (allErrors.length > 0) return { ok: false, errors: allErrors };
+  return { ok: true, expr, errors: [] };
+}
+
 class Parser {
   pos = 0;
   errors: SpellError[] = [];

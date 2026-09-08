@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SpellLang block editor — demo</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; }
+      header { padding: 8px 16px; background: #17171f; color: #e8e8f0; display: flex; gap: 16px; align-items: baseline; }
+      header code { color: #8ab4f8; }
+      #state { color: #9a9ab0; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>SpellLang block editor</strong>
+      <span id="state">loading…</span>
+    </header>
+    <spelllang-editor></spelllang-editor>
+    <script type="module">
+      import { SpellLang, tEnum, tInt, tNone, tString } from '../dist/index.js';
+      import '../dist/blocks/index.js';
+
+      const config = {
+        types: { VoxelType: { kind: 'enum', values: ['STONE', 'DIRT', 'PLANKS', 'TORCH'] } },
+        stateShape: { blocksPlaced: tInt },
+        contextShape: { tick: tInt },
+        callables: [
+          {
+            name: 'setVoxel',
+            args: [
+              { name: 'x', type: tInt, domain: { min: -64, max: 64 } },
+              { name: 'y', type: tInt, domain: { min: 0, max: 64 } },
+              { name: 'z', type: tInt, domain: { min: -64, max: 64 } },
+              { name: 'type', type: tEnum('VoxelType') },
+              { name: 'color', type: tString, optional: true },
+            ],
+            returnType: tNone,
+            fuelCost: 1,
+            doc: 'Place one voxel.',
+            category: 'world',
+          },
+          {
+            name: 'say',
+            args: [{ name: 'message', type: tString }],
+            returnType: tNone,
+            fuelCost: 1,
+            doc: 'Show a message.',
+            category: 'world',
+          },
+        ],
+      };
+
+      const lang = new SpellLang(config);
+      const editor = document.querySelector('spelllang-editor');
+      const state = document.getElementById('state');
+
+      editor.config = config;
+      const sample = `
+for i of range(0, 4) {
+  if i % 2 == 0 {
+    call setVoxel(i, 0, 0, STONE)
+  } else {
+    call setVoxel(i, 0, 0, DIRT)
+  }
+}
+state.blocksPlaced = 4
+call say("done")
+`.trim();
+      const parsed = lang.parse(sample);
+      editor.program = parsed.ok ? parsed.program : { langVersion: 1, statements: [] };
+
+      editor.addEventListener('change', (e) => {
+        const { errors } = e.detail;
+        state.textContent = errors.length
+          ? `✗ ${errors.length} error(s): ${errors[0].message}`
+          : `✓ valid — ${e.detail.text.split('\n').length} line(s)`;
+        state.style.color = errors.length ? '#e05555' : '#4caf7d';
+        console.log(e.detail.text);
+      });
+    </script>
+  </body>
+</html>

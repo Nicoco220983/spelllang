@@ -298,6 +298,7 @@ spelllang/
 ├── README.md            # overview + test commands
 ├── DESIGN.md            # implementation design decisions
 ├── GRAMMAR.md           # LLM-facing grammar description
+├── BLOCKS.md            # block-surface spec: AST node ⇄ block mapping
 ├── EXAMPLES.md
 ├── LICENSE              # MIT
 ├── src/
@@ -308,13 +309,21 @@ spelllang/
 │   ├── builtins.ts      # fixed builtin helper registry
 │   ├── interpreter.ts   # fuel-bounded, deterministic exec
 │   ├── host.ts          # runtime construction, callable registration
-│   └── prompt.ts        # renderPromptRegistry
+│   ├── prompt.ts        # renderPromptRegistry
+│   └── blocks/          # block surface (`spelllang/blocks` subpath):
+│       ├── mapping.ts   #   socket render rule, palette model, AST path edits
+│       ├── editor.ts    #   <spelllang-editor> custom element (zero-dep)
+│       ├── css.ts       #   shadow-root stylesheet (CSS-var themable)
+│       └── index.ts     #   exports + guarded element registration
 ├── test/
 │   ├── parser.test.ts
 │   ├── validator.test.ts
 │   ├── host.test.ts            # host API: embed flow, config validation
 │   ├── interpreter.test.ts     # fuel, determinism, limits, state persistence
 │   ├── roundtrip.property.test.ts  # fast-check print<->parse stability
+│   ├── blocks.mapping.test.ts      # block-surface mapping unit tests
+│   ├── blocks.editor.test.ts       # <spelllang-editor> DOM tests (happy-dom)
+│   ├── blocks.roundtrip.property.test.ts  # socket-rule idempotence props
 │   ├── conformance.test.ts         # spec conformance suite
 │   └── llm-eval/             # LLM eval harness (§7 deliverable #4)
 │       ├── harness.ts        # prompt assembly, retry loop, metrics, artifacts

@@ -232,11 +232,16 @@ class Validator {
       case 'bool':
         return tBool;
       case 'enum': {
-        const decl = this.reg.types.get(expr.name);
-        if (!decl || decl.kind !== 'enum') {
-          this.error(expr.loc, 'unknown-enum', `Unknown enum value '${expr.name}'.`, [...this.reg.types.keys()], expr.name);
+        // `name` is the enum VALUE; find the declaring type. Already-
+        // classified enum nodes re-enter here when a validated program is
+        // validated again (e.g. block-editor edits, spellbook loads).
+        const typeName = this.findEnumType(expr.name);
+        if (!typeName) {
+          const known = [...this.reg.types.values()].flatMap((d) => (d.kind === 'enum' ? d.values : []));
+          this.error(expr.loc, 'unknown-enum', `Unknown enum value '${expr.name}'.`, known, expr.name);
+          return tInt;
         }
-        return { kind: 'enum', name: expr.name };
+        return { kind: 'enum', name: typeName };
       }
       case 'list': {
         if (expr.elements.length > this.reg.limits.maxListLength) {

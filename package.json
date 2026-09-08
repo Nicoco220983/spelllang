@@ -10,16 +10,25 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./blocks": {
+      "types": "./dist/blocks/index.d.ts",
+      "import": "./dist/blocks/index.js"
     }
   },
-  "files": ["dist", "GRAMMAR.md"],
+  "files": [
+    "dist",
+    "GRAMMAR.md",
+    "BLOCKS.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "eval": "vitest run test/llm-eval/eval.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "demo": "bash scripts/serve-demo.sh"
   },
   "engines": {
     "node": ">=20"
@@ -27,6 +36,7 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "fast-check": "^3.23.0",
+    "happy-dom": "^20.14.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.8"
   },
