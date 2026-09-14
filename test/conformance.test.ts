@@ -8,9 +8,10 @@ import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { SpellLang } from '../src/host.js';
 import { renderPromptRegistry } from '../src/prompt.js';
+import type { Limits, Value } from '../src/ast.js';
 import { tInt } from '../src/ast.js';
 
-function runtime() {
+function runtime(limits?: Partial<Limits>) {
   return new SpellLang({
     callables: [
       {
@@ -25,8 +26,8 @@ function runtime() {
         doc: 'Place a voxel.',
       },
     ],
-    contextShape: { tick: tInt },
-    stateShape: { n: tInt },
+    contextShape: { tick: tInt, ev: { kind: 'record', name: 'Event' } },
+    stateShape: { n: tInt, guests: { kind: 'list', elem: { kind: 'string' } } },
     types: {
       SpawnOpts: {
         kind: 'record',
@@ -35,7 +36,15 @@ function runtime() {
           { name: 'mode', type: { kind: 'optional', inner: { kind: 'string' } } },
         ],
       },
+      Event: {
+        kind: 'record',
+        fields: [
+          { name: 'kind', type: { kind: 'string' } },
+          { name: 'id', type: { kind: 'optional', inner: { kind: 'string' } } },
+        ],
+      },
     },
+    limits,
   });
 }
 
@@ -52,7 +61,12 @@ describe('conformance: invalid programs are rejected with localized errors', () 
     ['unknown state field', 'state.zzz = 1'],
     ['user function attempt', 'function f() {}'],
     ['while attempt', 'while true { stop }'],
-    ['indexing attempt', 'let x = tick[0]'],
+    ['indexing a non-list', 'let x = tick[0]'],
+    ['mixed string concatenation', 'let x = "a" + 1'],
+    ['append element type mismatch', 'state.guests = append(state.guests, 1)'],
+    ['literal index out of range', 'let x = [1, 2][5]'],
+    ['randomInt with float bounds', 'let x = randomInt(1.5, 6)'],
+    ['comparing none with an int', 'let x = 5 == none'],
     ['import attempt', 'import things'],
     ['missing brace', 'if true {\n stop'],
     ['unclosed paren', 'call setVoxel(1, 2, 3'],
@@ -104,6 +118,48 @@ describe('conformance: record literals', () => {
   it('accepts a valid record literal (any field order, omitted optionals)', () => {
     const r = runtime().parse('let o = SpawnOpts { mode: "calm", count: 2 }\nlet p = SpawnOpts { count: 1 }');
     expect(r.ok).toBe(true);
+  });
+});
+
+describe('conformance: P1 surface is accepted', () => {
+  const cases: [string, string][] = [
+    ['string concatenation', 'let s = "a" + "b"'],
+    ['list builtins', 'state.guests = append(state.guests, "x")\nlet n = len(state.guests)\nlet b = contains(state.guests, "x")'],
+    ['list indexing', 'let corners = [[10, 10], [10, 42]]\nlet x = corners[0][1]'],
+    ['randomInt and sqrt', 'let r = randomInt(1, 6)\nlet s = sqrt(2.0)'],
+    ['none presence test', 'if ev.id != none {\n call setVoxel(0, 0, 0)\n}'],
+  ];
+
+  it.each(cases)('accepts: %s', (_name, text) => {
+    expect(runtime().parse(text).ok).toBe(true);
+  });
+});
+
+describe('conformance: list state persists across runs (P1.1)', () => {
+  it('a list-typed state field survives run→run with repeated appends', () => {
+    const rt = runtime();
+    const r = rt.parse('state.guests = append(state.guests, "g" + "1")');
+    expect(r.ok).toBe(true);
+    let state: Record<string, Value> = { n: 0, guests: [] };
+    for (let i = 0; i < 3; i++) {
+      const exec = rt.run(r.program!, { callablesImpl: {}, state });
+      expect(exec.result).toBe('ok');
+      expect(exec.stateChanged).toBe(true);
+      state = exec.state;
+    }
+    expect(state.guests).toEqual(['g1', 'g1', 'g1']);
+  });
+
+  it('append respects maxListLength at runtime', () => {
+    const rt = runtime({ maxListLength: 2 });
+    const r = rt.parse('state.guests = append(state.guests, "c")');
+    expect(r.ok).toBe(true);
+    const exec = rt.run(r.program!, {
+      callablesImpl: {},
+      state: { n: 0, guests: ['a', 'b'] },
+    });
+    expect(exec.result).toBe('runtime-error');
+    expect(exec.error?.code).toBe('list-too-large');
   });
 });
 

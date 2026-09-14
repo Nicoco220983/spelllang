@@ -137,7 +137,10 @@ const exec = runtime.run(program, {
   callablesImpl,  // host implementations, injected per run (enables per-world scoping)
 });
 // exec.result: 'ok' | 'out-of-fuel' | 'runtime-error' | 'invalid-call'
-// exec.intents / exec.returnValue / exec.state (updated) / exec.fuelUsed
+// exec.intents / exec.state (updated; runs that assigned nothing return the
+// input record by reference, flagged by exec.stateChanged) / exec.fuelUsed
+// exec.error on failure: { code, message, stack? } — stack is a
+// statement-level trace with source locations (innermost frame first)
 ```
 
 Key properties:
@@ -210,28 +213,31 @@ set is fixed:
 ### 5.3 Expressions
 
 - Values: numbers (int/float distinction matches host types), booleans,
-  strings (opaque: no ops beyond equality and passing to callables), enums
-  (host-registered), lists, and objects (host-declared records with named
-  fields — no classes, no components, no methods). Scripts construct
-  objects with record literals (`TypeName { field: expr, ... }`, fields in
-  any order, optional fields omittable) for named, self-documenting
-  "options bag" arguments; no kwargs syntax exists. In an unparenthesized
-  if condition or for iterable, `{` after the condition opens the body, so a
-  record literal there must be parenthesized: `if (T { ... }).field > 0 {`.
-- Arithmetic `+ - * / %`, comparison `< <= == != >= >`, logic `and or not`,
-  parentheses. Short-circuit semantics fixed and documented.
+  strings (opaque: no parsing or formatting — but two strings concatenate
+  with `+`), enums (host-registered), lists, and objects (host-declared
+  records with named fields — no classes, no components, no methods). Scripts
+  construct objects with record literals (`TypeName { field: expr, ... }`,
+  fields in any order, optional fields omittable) for named,
+  self-documenting "options bag" arguments; no kwargs syntax exists. In an
+  unparenthesized if condition or for iterable, `{` after the condition opens
+  the body, so a record literal there must be parenthesized: `if (T { ... }).field > 0 {`.
+- Arithmetic `+ - * / %` (`+` also concatenates two strings; mixed operand
+  pairs are validation errors), comparison `< <= == != >= >`, logic
+  `and or not`, parentheses. Short-circuit semantics fixed and documented.
 - A **small fixed library** of pure helpers (host cannot add expression
   operators; hosts add *callables* instead): `min max abs floor ceil round
   distance(a,b) random()` (seeded — see §6), `range(start, end)` (list of
-  ints, half-open).
-- Member access on objects via declared fields only; list access only via
-  `for` iteration. No indexing operator in v1.
+  ints, half-open), `len append contains randomInt sqrt` (list helpers —
+  `append`/`contains` are generic over the list element type).
+- Member access on objects via declared fields only; list elements via `for`
+  iteration or 0-based indexing (`list[i]`, bounds-checked — a validation
+  error for literal lists with literal indexes, a runtime error otherwise).
 
 ### 5.4 Explicitly absent (v1)
 
 User functions, recursion, `while` (use `for` over `range`), dynamic typing
-beyond declared unions, string ops, arrays-of-arrays, exceptions/try, imports,
-reflection, null (use optional-typed host values with `exists` check).
+beyond declared unions, exceptions/try, imports, reflection, null (use
+optional-typed host values; test presence with `!= none`).
 
 ---
 

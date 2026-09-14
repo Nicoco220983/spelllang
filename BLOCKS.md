@@ -79,6 +79,7 @@ Rendered when the socket rule (§2) demands nested blocks:
 |---|---|
 | `callBuiltin` | pill block `name(arg…)` with typed arg sockets (signatures from the fixed builtin registry) |
 | `member` | object socket + `.field` text field |
+| `index` | object socket + `[` index socket `]` |
 | `binary` | left socket · operator dropdown (`+ - * / % == != < <= > >= and or`) · right socket; committing an operator keeps both operands (the validator flags type nonsense with the usual error JSON) |
 | `unary` | `not`/`−` label + operand socket |
 | `list` | `[ ▢ − … ]` element sockets with per-element `−` and a `+ item` control |

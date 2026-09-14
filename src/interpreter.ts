@@ -12,6 +12,7 @@ import type {
   Intent,
   Limits,
   Program,
+  StackFrame,
   Stmt,
   TypeDecl,
   Value,
@@ -39,9 +40,14 @@ export interface RunConfig {
   limits: Limits;
 }
 
-class OutOfFuel extends Error {}
+class OutOfFuel extends Error {
+  /** statement stack captured where the failure unwinds (innermost first) */
+  frames?: StackFrame[];
+}
 class StopProgram extends Error {}
 class RuntimeFailure extends Error {
+  frames?: StackFrame[];
+
   constructor(
     public code: string,
     message: string,
@@ -72,9 +78,12 @@ class Interpreter {
   private rng: () => number;
   private scopes: Map<string, Value>[] = [new Map()];
   private state: Record<string, Value>;
+  private stateChanged = false;
   private readonly context: Record<string, Value>;
   private intents: Intent[] = [];
   private depth = 0;
+  /** statement stack of the currently executing nesting (for error traces) */
+  private frames: StackFrame[] = [];
 
   constructor(
     private inputs: RunInputs,
@@ -88,7 +97,7 @@ class Interpreter {
 
   runProgram(program: Program): ExecResult {
     let result: ExecResult['result'] = 'ok';
-    let error: { code: string; message: string } | undefined;
+    let error: ExecResult['error'];
     try {
       for (const stmt of program.statements) {
         this.execStmt(stmt);
@@ -96,11 +105,12 @@ class Interpreter {
     } catch (e) {
       if (e instanceof OutOfFuel) {
         result = 'out-of-fuel';
+        error = { code: 'out-of-fuel', message: e.message, stack: e.frames ?? [] };
       } else if (e instanceof StopProgram) {
         result = 'ok';
       } else if (e instanceof RuntimeFailure) {
         result = e.code === 'invalid-call' ? 'invalid-call' : 'runtime-error';
-        error = { code: e.code, message: e.message };
+        error = { code: e.code, message: e.message, stack: e.frames ?? [] };
       } else {
         throw e;
       }
@@ -108,7 +118,10 @@ class Interpreter {
     return {
       result,
       intents: this.intents,
-      state: deepCopy(this.state),
+      // zero-copy fast path: a run that never touched state returns the
+      // host's record as-is so the host can cheaply discard it
+      state: this.stateChanged ? deepCopy(this.state) : (this.inputs.state ?? {}),
+      stateChanged: this.stateChanged,
       fuelUsed: this.fuelUsed,
       error,
     };
@@ -127,7 +140,26 @@ class Interpreter {
   // -- statements -----------------------------------------------------------
 
   private execStmt(stmt: Stmt): void {
-    this.burn(stmt.loc);
+    this.frames.push({ line: stmt.loc.line, col: stmt.loc.col, at: describeStmt(stmt) });
+    try {
+      this.burn(stmt.loc);
+      this.execStmtInner(stmt);
+    } catch (e) {
+      // capture the statement stack at the innermost frame only — by the
+      // time the failure reaches runProgram, every finally has popped.
+      if (
+        (e instanceof RuntimeFailure || e instanceof OutOfFuel) &&
+        e.frames === undefined
+      ) {
+        e.frames = [...this.frames].reverse();
+      }
+      throw e;
+    } finally {
+      this.frames.pop();
+    }
+  }
+
+  private execStmtInner(stmt: Stmt): void {
     switch (stmt.kind) {
       case 'call':
         this.execCall(stmt);
@@ -140,6 +172,7 @@ class Interpreter {
         return;
       case 'stateAssign':
         this.state[stmt.field] = this.evalExpr(stmt.value);
+        this.stateChanged = true;
         return;
       case 'if': {
         for (const branch of stmt.branches) {
@@ -250,6 +283,8 @@ class Interpreter {
       case 'str':
       case 'bool':
         return expr.value;
+      case 'none':
+        return null;
       case 'enum':
         return expr.name;
       case 'list':
@@ -284,6 +319,18 @@ class Interpreter {
         }
         throw new RuntimeFailure('runtime-error', `Cannot access field '${expr.field}' on a non-object.`);
       }
+      case 'index': {
+        const obj = this.evalExpr(expr.object);
+        const idx = this.evalExpr(expr.index);
+        if (!Array.isArray(obj)) {
+          throw new RuntimeFailure('runtime-error', `Cannot index into a non-list (validator missed this).`);
+        }
+        const i = this.asNumber(idx);
+        if (!Number.isInteger(i) || i < 0 || i >= obj.length) {
+          throw new RuntimeFailure('index-out-of-range', `Index ${String(idx)} is out of range for a list of ${obj.length} element(s).`);
+        }
+        return obj[i]!;
+      }
       case 'unary': {
         const v = this.evalExpr(expr.operand);
         if (expr.op === 'not') return !v;
@@ -308,6 +355,7 @@ class Interpreter {
     const r = this.evalExpr(expr.right);
     switch (expr.op) {
       case '+':
+        if (typeof l === 'string' && typeof r === 'string') return l + r;
         return this.asNumber(l) + this.asNumber(r);
       case '-':
         return this.asNumber(l) - this.asNumber(r);
@@ -369,6 +417,43 @@ class Interpreter {
       }
       case 'random':
         return this.rng();
+      case 'len':
+        return (args[0] as Value[]).length;
+      case 'append': {
+        const list = args[0] as Value[];
+        if (list.length >= this.config.limits.maxListLength) {
+          throw new RuntimeFailure('list-too-large', `append would exceed the max list length (${this.config.limits.maxListLength}).`);
+        }
+        // shallow copy: lists are immutable in-script, so sharing elements
+        // is safe; fuel tracks the copy, one per element
+        const out: Value[] = [];
+        for (const v of list) {
+          this.burn(expr.loc);
+          out.push(v);
+        }
+        out.push(args[1]!);
+        return out;
+      }
+      case 'contains': {
+        const list = args[0] as Value[];
+        const x = args[1] as Value;
+        // fuel tracks the scan, one per element examined (short-circuits)
+        for (const v of list) {
+          this.burn(expr.loc);
+          if (valuesEqual(v, x)) return true;
+        }
+        return false;
+      }
+      case 'randomInt': {
+        const lo = this.asNumber(args[0]!);
+        const hi = this.asNumber(args[1]!);
+        if (lo > hi) {
+          throw new RuntimeFailure('invalid-range', `randomInt(${lo}, ${hi}) requires min <= max.`);
+        }
+        return lo + Math.floor(this.rng() * (hi - lo + 1));
+      }
+      case 'sqrt':
+        return Math.sqrt(this.asNumber(args[0]!));
       case 'range': {
         const start = this.asNumber(args[0]!);
         const end = this.asNumber(args[1]!);
@@ -400,6 +485,26 @@ class Interpreter {
 // ---------------------------------------------------------------------------
 // Value helpers
 // ---------------------------------------------------------------------------
+
+/** Short label for a statement in error stack traces, e.g. `call 'shout'`. */
+function describeStmt(stmt: Stmt): string {
+  switch (stmt.kind) {
+    case 'call':
+      return `call '${stmt.name}'`;
+    case 'let':
+      return `let '${stmt.name}'`;
+    case 'assign':
+      return `'${stmt.name}' = …`;
+    case 'stateAssign':
+      return `state.${stmt.field} = …`;
+    case 'if':
+      return 'if';
+    case 'for':
+      return `for '${stmt.variable}'`;
+    case 'stop':
+      return 'stop';
+  }
+}
 
 function deepCopy<T>(v: T): T {
   return structuredClone(v);
@@ -444,5 +549,8 @@ function shapeMatches(type: CallableDecl['returnType'], value: Value): boolean {
       return value === null || shapeMatches(type.inner, value);
     case 'vec':
       return isObject(value);
+    case 'typevar':
+      // host callables cannot declare type variables; never matches
+      return false;
   }
 }

@@ -52,7 +52,7 @@ Classic precedence, tightest binding last:
 | 5 | `+ -` | left-assoc |
 | 6 | `* / %` | left-assoc |
 | 7 | `-` | unary minus |
-| 8 | `.field`, call args | postfix |
+| 8 | `.field`, call args, `list[i]` | postfix |
 
 ```ebnf
 expr     := orExpr
@@ -63,8 +63,8 @@ cmpExpr  := addExpr (("=="|"!="|"<"|"<="|">"|">=") addExpr)?
 addExpr  := mulExpr (("+"|"-") mulExpr)*
 mulExpr  := unary (("*"|"/"|"%") unary)*
 unary    := "-" unary | postfix
-postfix  := primary ("." IDENT | "(" args ")")*
-primary  := NUMBER | STRING | "true" | "false" | IDENT
+postfix  := primary ("." IDENT | "(" args ")" | "[" expr "]")*
+primary  := NUMBER | STRING | "true" | "false" | "none" | IDENT
           | "[" (expr ("," expr)* ","?)? "]" | "(" expr ")"
           | IDENT "{" (IDENT ":" expr ("," | newline)*)? "}"
 ```
@@ -87,8 +87,11 @@ make persistence visible. Enum values are plain identifiers from the
 host-registered enum registry (e.g. `DIRT`, `STONE`); convention is
 UPPER_SNAKE but enforcement is registry membership, not casing.
 
-Strings: `"..."` with escapes `\"`, `\\`, `\n`. Opaque: equality + passing to
-callables only.
+Strings: `"..."` with escapes `\"`, `\\`, `\n`. Opaque: equality, `+`
+concatenation of two strings (a mixed operand pair is a validation error),
+and passing to callables only. `none` is a literal of type none — the value
+of omitted optional record fields and the right-hand side of presence tests
+(`e.id != none`).
 
 ### 1.3 Literals & types
 
@@ -97,7 +100,7 @@ callables only.
 | int | `42`, `-7` | exact; host int range enforced in validator if declared |
 | float | `3.14`, `-0.5` | |
 | bool | `true`, `false` | |
-| string | `"text"` | opaque |
+| string | `"text"` | opaque; `+` concatenates two strings |
 | enum | `DIRT` | host-registered |
 | list | `[1, 2, 3]` | homogeneous element type inferred; max length from host type decl or static literal length |
 | object | `Opts { count: 5 }` | host-declared records; literal fields in any order, omitted optional fields become `none` |
@@ -121,6 +124,7 @@ type Expr =
   | { kind: 'num', value: number, isInt: boolean }
   | { kind: 'str', value: string }
   | { kind: 'bool', value: boolean }
+  | { kind: 'none' }                                       // the none literal
   | { kind: 'enum', name: string }
   | { kind: 'list', elements: Expr[] }
   | { kind: 'recordLit', typeName: string,
@@ -129,6 +133,7 @@ type Expr =
   | { kind: 'stateField', field: string }                  // desugared from state.<f>
   | { kind: 'contextField', field: string }                // reclassified from bare var
   | { kind: 'member', object: Expr, field: string }
+  | { kind: 'index', object: Expr, index: Expr }              // list[i], 0-based
   | { kind: 'binary', op: string, left: Expr, right: Expr }
   | { kind: 'unary', op: '-' | 'not', operand: Expr }
   | { kind: 'callBuiltin', name: string, args: Expr[] }    // fixed set only
@@ -153,6 +158,18 @@ parser only knows syntax.
 | `distance(a,b)` | (vec, vec) → float | 2 |
 | `random()` | () → float in [0,1) | 1 |
 | `range(start, end)` | (int, int) → list of int | 1 |
+| `len(xs)` | (list<T>) → int | 1 |
+| `append(xs, x)` | (list<T>, T) → list<T> | 1 (+1 per element copied) |
+| `contains(xs, x)` | (list<T>, T) → bool | 1 (+1 per element examined) |
+| `randomInt(min, max)` | (int, int) → int in [min, max] | 1 |
+| `sqrt(x)` | (num) → float | 1 |
+
+`len`, `append`, and `contains` are generic over the list element type: the
+declaration uses a type variable (`list<T>`), which the validator substitutes
+per call site (the element argument must match the list's element type).
+`append` returns a **new** list (shallow copy — lists are immutable in
+scripts, so sharing elements is safe) and enforces `limits.maxListLength`
+on the result.
 
 `range` is half-open (`range(0, 3)` = `[0, 1, 2]`), direction follows the
 sign of `end - start` (`range(3, 0)` counts down), and its length is bounded
@@ -170,6 +187,18 @@ Semantics that must be nailed down:
 - Float equality with `==` is allowed; hosts are warned in docs.
 - Short-circuit: `and`/`or` return the boolean result of the *test*, always
   bool; no truthiness of non-bools (type error).
+- `+` on two strings concatenates; a mixed operand pair (e.g. `"a" + 1`) is
+  a validation error.
+- `==`/`!=` allow `none` against optional-typed values (presence tests,
+  e.g. `e.id != none`) and against `none` itself; other type pairs follow the
+  equality rule above. There is no narrowing: after a `!= none` check the
+  field keeps its optional type.
+- List indexing `xs[i]`: `i` must be an int; a literal index into a literal
+  list is bounds-checked at validation (`index-out-of-range`), everything
+  else at runtime (same path as division by zero). No negative indexing.
+- `randomInt(min, max)` is inclusive on both ends, draws from the same
+  seeded stream as `random()`, and requires `min <= max` (runtime error
+  otherwise).
 
 ## 4. Validation (static, post-parse, before any execution)
 
@@ -181,7 +210,13 @@ errors, never stops at the first.
 2. **Types**: first-assignment typing of `let` (rebinding a `let` to a
    different type = error); `state` field types are fixed by host declaration;
    operand/argument type matching; homogeneous lists; comparison operands
-   compatible; `if` conditions are bool; `for` iterates a list.
+   compatible; `if` conditions are bool; `for` iterates a list. `+` accepts
+   two numbers or two strings (mixed = error). Generic builtin arguments
+   (`append`/`contains`/`len`) bind the list's element type and require the
+   element argument to match it. List indexing requires a list and an int
+   index; a literal index into a literal list is bounds-checked statically
+   (`index-out-of-range`). `==`/`!=` allow `none` against optional-typed
+   values; other comparisons require compatible types.
 3. **Value domains** (callable args): enum membership, numeric ranges,
    non-null where declared.
    Record literals: the type name must name a declared record type
@@ -240,18 +275,33 @@ goal is the complete error list in one pass.
   (host can't mutate it mid-loop — values are copied into the run).
 - **Copy semantics**: values crossing the run boundary (`state`, `context`,
   callable args/returns) are deep-copied at the host API edge. The script
-  never holds a reference to host memory.
+  never holds a reference to host memory. When no `state` assignment
+  executed, the unchanged input record is handed back as-is
+  (`stateChanged: false`).
 - **`stop`**: terminates the program immediately (result `ok`).
 - **Result object**:
   ```ts
   {
     result: 'ok' | 'out-of-fuel' | 'runtime-error' | 'invalid-call',
     intents: Intent[],          // accumulated host-intent records
-    state: StateRecord,         // updated (only if 'ok' or host chooses)
+    state: StateRecord,         // updated copy; the *input* record by
+                                // reference when nothing was assigned
+    stateChanged: boolean,      // true when a stateAssign executed
     fuelUsed: number,
-    error?: { code, message }   // for runtime-error / invalid-call
+    error?: {                   // for runtime-error / invalid-call / out-of-fuel
+      code, message,
+      stack?: { line, col, at }[]  // statement-level trace, innermost first
+    }
   }
   ```
+- Whether a program *can* assign state is statically known; whether a *run*
+  did is a runtime fact. When no `state.<field> = …` executed, the run
+  returns the host's input record by reference and sets `stateChanged:
+  false` — the common "nothing to do" run then costs zero state copies.
+- On failure the interpreter attaches the statement stack (source locations,
+  innermost frame first) to `error`. The stack is maintained as a push/pop
+  per executed statement and snapshotted only where the failure unwinds —
+  zero cost on the success path beyond O(1) bookkeeping.
 - A callable that throws / returns invalid data → `invalid-call` (host bug
   surfaced, not a script fault), run terminates.
 

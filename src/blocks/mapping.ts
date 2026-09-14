@@ -68,6 +68,8 @@ function countCalls(expr: Expr): number {
       return countCalls(expr.operand);
     case 'member':
       return countCalls(expr.object);
+    case 'index':
+      return countCalls(expr.object) + countCalls(expr.index);
     case 'list':
       return expr.elements.reduce((n, e) => n + countCalls(e), 0);
     case 'recordLit':
@@ -82,6 +84,8 @@ function hasMemberOnCall(expr: Expr): boolean {
   switch (expr.kind) {
     case 'member':
       return countCalls(expr.object) > 0 || hasMemberOnCall(expr.object);
+    case 'index':
+      return hasMemberOnCall(expr.object) || hasMemberOnCall(expr.index);
     case 'callBuiltin':
       return expr.args.some(hasMemberOnCall);
     case 'binary':
@@ -348,6 +352,8 @@ export type ExprSel =
   | `elem:${number}`
   | `field:${string}`
   | 'object'
+  | 'indexObject'
+  | 'indexAt'
   | 'left'
   | 'right'
   | 'operand';
@@ -377,6 +383,10 @@ function childExpr(c: ExprContainer, sel: ExprSel): Expr | null {
   switch (sel) {
     case 'object':
       return e.kind === 'member' ? e.object : null;
+    case 'indexObject':
+      return e.kind === 'index' ? e.object : null;
+    case 'indexAt':
+      return e.kind === 'index' ? e.index : null;
     case 'left':
       return e.kind === 'binary' ? e.left : null;
     case 'right':
@@ -438,6 +448,10 @@ function withChildExpr(c: ExprContainer, sel: ExprSel, next: Expr): ExprContaine
   switch (sel) {
     case 'object':
       return e.kind === 'member' ? { kind: 'expr', expr: { ...e, object: next } } : c;
+    case 'indexObject':
+      return e.kind === 'index' ? { kind: 'expr', expr: { ...e, object: next } } : c;
+    case 'indexAt':
+      return e.kind === 'index' ? { kind: 'expr', expr: { ...e, index: next } } : c;
     case 'left':
       return e.kind === 'binary' ? { kind: 'expr', expr: { ...e, left: next } } : c;
     case 'right':

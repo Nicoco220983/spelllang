@@ -92,6 +92,35 @@ Inside an `if` condition or `for` iterable, wrap the literal in parentheses
 (`if (SpawnOpts { count: 5 }).count > 3 { ... }`) — a bare `{` there opens
 the body block.
 
+## 7. Entity behavior — memory & presence (list state)
+
+Greet each player exactly once, and skip events that carry no actor id. The
+host declares `state.guests list<string>`, `players list<player>`
+(`player { id: string, name: string }`), and `events list<Event>`
+(`Event { kind: string, id: string? }`).
+
+```spelllang
+// Personalized greeting once per player; react only to events with an actor
+for p of players {
+    if not contains(state.guests, p.id) {
+        call say("Welcome, " + p.name + "!")
+        state.guests = append(state.guests, p.id)
+    }
+}
+if len(state.guests) > 5 {
+    call celebrate("the tavern is busy")
+}
+for e of events {
+    if e.id != none {
+        call note("actor seen: " + e.id)
+    }
+}
+```
+
+`append` returns a new list — assign it back to the state field. Waypoint
+tables collapse if-chains: `let corners = [[10, 10], [10, 42]]` then
+`corners[state.wp][0]`.
+
 ## Deliberate errors (for retry-loop testing)
 
 ```spelllang

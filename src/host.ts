@@ -59,6 +59,7 @@ const TYPE_KINDS = new Set([
   'list',
   'record',
   'optional',
+  'typevar',
 ]);
 
 function checkType(value: unknown, path: string): void {
@@ -70,6 +71,9 @@ function checkType(value: unknown, path: string): void {
   }
   if ((value.kind === 'enum' || value.kind === 'record') && typeof value.name !== 'string') {
     throw new Error(`${path}.name must be a string naming a declared type.`);
+  }
+  if (value.kind === 'typevar' && typeof value.id !== 'string') {
+    throw new Error(`${path}.id must be a string naming the type variable.`);
   }
   if (value.kind === 'list') checkType(value.elem, `${path}.elem`);
   if (value.kind === 'optional') checkType(value.inner, `${path}.inner`);

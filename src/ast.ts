@@ -43,7 +43,12 @@ export type Type =
   | { kind: 'list'; elem: Type }
   | { kind: 'record'; name: string }
   /** `T | none` — for callable returns/args and optional fields */
-  | { kind: 'optional'; inner: Type };
+  | { kind: 'optional'; inner: Type }
+  /**
+   * Type variable — generic builtin parameters only (never host-declared;
+   * the validator substitutes it per call site). Not a script-facing type.
+   */
+  | { kind: 'typevar'; id: string };
 
 export const tInt: Type = { kind: 'int' };
 export const tFloat: Type = { kind: 'float' };
@@ -54,6 +59,7 @@ export const tEnum = (name: string): Type => ({ kind: 'enum', name });
 export const tList = (elem: Type): Type => ({ kind: 'list', elem });
 export const tRecord = (name: string): Type => ({ kind: 'record', name });
 export const tOptional = (inner: Type): Type => ({ kind: 'optional', inner });
+export const tTypeVar = (id: string): Type => ({ kind: 'typevar', id });
 
 /** Structural equality on types (enum/record compared by name). */
 export function typeEquals(a: Type, b: Type): boolean {
@@ -67,6 +73,8 @@ export function typeEquals(a: Type, b: Type): boolean {
       return typeEquals(a.elem, (b as { elem: Type }).elem);
     case 'optional':
       return typeEquals(a.inner, (b as { inner: Type }).inner);
+    case 'typevar':
+      return (b as { id: string }).id === a.id;
     default:
       return true;
   }
@@ -110,6 +118,8 @@ export type Expr =
   | { kind: 'num'; value: number; isInt: boolean; loc: Loc }
   | { kind: 'str'; value: string; loc: Loc }
   | { kind: 'bool'; value: boolean; loc: Loc }
+  /** the `none` literal — the only literal of type none (optional-field presence tests) */
+  | { kind: 'none'; loc: Loc }
   | { kind: 'enum'; name: string; loc: Loc }
   | { kind: 'list'; elements: Expr[]; loc: Loc }
   /** construct a host-declared record: `TypeName { field: expr, ... }` */
@@ -123,6 +133,8 @@ export type Expr =
   | { kind: 'stateField'; field: string; loc: Loc }
   | { kind: 'contextField'; field: string; loc: Loc }
   | { kind: 'member'; object: Expr; field: string; loc: Loc }
+  /** list element access: `list[i]` (0-based; bounds-checked) */
+  | { kind: 'index'; object: Expr; index: Expr; loc: Loc }
   | { kind: 'binary'; op: string; left: Expr; right: Expr; loc: Loc }
   | { kind: 'unary'; op: '-' | 'not'; operand: Expr; loc: Loc }
   | { kind: 'callBuiltin'; name: string; args: Expr[]; loc: Loc };
@@ -221,11 +233,25 @@ export type RunResultKind =
   | 'runtime-error'
   | 'invalid-call';
 
+/** One entry of an error's statement-level stack trace (innermost first). */
+export interface StackFrame {
+  line: number;
+  col: number;
+  /** what was executing, e.g. "call 'shout'", "for", "state.x = …" */
+  at: string;
+}
+
 export interface ExecResult {
   result: RunResultKind;
   intents: Intent[];
-  /** updated state record; the host decides whether to keep it */
+  /**
+   * Updated state record; the host decides whether to keep it. When the run
+   * executed no `state.<field> = …` assignment, this is the input record
+   * returned by reference and `stateChanged` is false (zero-copy fast path).
+   */
   state: Record<string, Value>;
+  /** true when the run assigned at least one state field */
+  stateChanged: boolean;
   fuelUsed: number;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; stack?: StackFrame[] };
 }

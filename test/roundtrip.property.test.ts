@@ -18,7 +18,7 @@ const loc = { line: 1, col: 1 };
  * so reachable ASTs never use them as names (mirrors parser.ts RESERVED). */
 const RESERVED = new Set([
   'call', 'let', 'if', 'else', 'for', 'of', 'stop', 'state',
-  'and', 'or', 'not', 'true', 'false',
+  'and', 'or', 'not', 'true', 'false', 'none',
 ]);
 
 const identGen = fc.stringMatching(/^[a-z_][a-z0-9_]*$/).filter((s) => !RESERVED.has(s));
@@ -50,6 +50,7 @@ const exprGen: fc.Arbitrary<Expr> = fc.letrec((tie) => ({
     })) as fc.Arbitrary<Expr>,
     strGen.map((v) => ({ kind: 'str', value: v, loc }) as Expr),
     fc.boolean().map((v) => ({ kind: 'bool', value: v, loc }) as Expr),
+    fc.constant({ kind: 'none', loc }) as fc.Arbitrary<Expr>,
     identGen.map((v) => ({ kind: 'var', name: v, loc }) as Expr),
     identGen.map((v) => ({ kind: 'stateField', field: v, loc }) as Expr),
     fc
@@ -81,6 +82,9 @@ const exprGen: fc.Arbitrary<Expr> = fc.letrec((tie) => ({
     fc
       .tuple(tie('expr') as fc.Arbitrary<Expr>, identGen)
       .map(([object, field]) => ({ kind: 'member', object, field, loc }) as Expr),
+    fc
+      .tuple(tie('expr') as fc.Arbitrary<Expr>, tie('expr') as fc.Arbitrary<Expr>)
+      .map(([object, index]) => ({ kind: 'index', object, index, loc }) as Expr),
     fc
       .tuple(builtinNameGen, fc.array(tie('expr') as fc.Arbitrary<Expr>, { minLength: 0, maxLength: 2 }))
       .map(([name, args]) => ({ kind: 'callBuiltin', name, args, loc }) as Expr),

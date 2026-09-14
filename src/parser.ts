@@ -48,6 +48,7 @@ const RESERVED = new Set([
   'not',
   'true',
   'false',
+  'none',
 ]);
 
 const STATEMENT_KEYWORDS = new Set([
@@ -681,6 +682,13 @@ class Parser {
         expr = { kind: 'member', object: expr, field: field.text, loc: t.loc };
         continue;
       }
+      if (t.kind === 'punct' && t.text === '[') {
+        this.next();
+        const index = this.parseExpr();
+        this.expectPunct(']');
+        expr = { kind: 'index', object: expr, index, loc: t.loc };
+        continue;
+      }
       // builtin call: IDENT '(' immediately (primary was a bare var)
       if (
         t.kind === 'punct' &&
@@ -700,7 +708,7 @@ class Parser {
           col: t.loc.col,
           code: 'unexpected-token',
           message:
-            "Only builtin helpers (min, max, abs, floor, ceil, round, distance, random, range) can be called in expressions; host callables are 'call' statements.",
+            "Only the fixed builtin helpers can be called in expressions; host callables are 'call' statements.",
           expected: ['operator', 'end of expression'],
           found: '(',
         });
@@ -728,6 +736,10 @@ class Parser {
       if (t.text === 'true' || t.text === 'false') {
         this.next();
         return { kind: 'bool', value: t.text === 'true', loc: t.loc };
+      }
+      if (t.text === 'none') {
+        this.next();
+        return { kind: 'none', loc: t.loc };
       }
       if (t.text === 'state') {
         this.next();

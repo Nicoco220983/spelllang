@@ -62,6 +62,8 @@ function typeText(t: Type): string {
       return t.name;
     case 'optional':
       return `${typeText(t.inner)}?`;
+    case 'typevar':
+      return t.id;
   }
 }
 

@@ -76,6 +76,9 @@ describe('shouldRenderAsTextField (DESIGN.md §8)', () => {
     ['min(abs(x), 2)', false], // two calls
     ['[1, min(a, b)]', true], // one call inside a list
     ['[min(a, b), max(c, d)]', false], // two calls inside a list
+    ['corners[state.wp][0]', true], // indexing stays inline
+    ['xs[min(a, b)]', true], // one call inside an index
+    ['xs[min(a, b) + max(c, d)]', false], // two calls inside an index
   ])('%s → %s', (text, expected) => {
     expect(shouldRenderAsTextField(expr(text))).toBe(expected);
   });
@@ -206,6 +209,23 @@ describe('expression slots', () => {
     // compare printed forms: parsed and generated nodes differ only in loc
     expect(printExpr(getExprSlot(next, ['arg:0', 'arg:1'])!)).toBe('9');
     expect(printExpr(getExprSlot(stmt, ['arg:0', 'arg:1'])!)).toBe('2');
+  });
+});
+
+describe('expression slots: list indexing', () => {
+  const stmt: Stmt = { kind: 'let', name: 'x', value: expr('corners[i][0]'), loc };
+
+  it('getExprSlot resolves indexObject / indexAt through chains', () => {
+    expect(getExprSlot(stmt, ['value'])?.kind).toBe('index');
+    expect(getExprSlot(stmt, ['value', 'indexObject'])?.kind).toBe('index');
+    expect(getExprSlot(stmt, ['value', 'indexObject', 'indexObject'])?.kind).toBe('var');
+    expect(getExprSlot(stmt, ['value', 'indexAt'])?.kind).toBe('num');
+  });
+
+  it('replaceExprSlot rebuilds index nodes immutably', () => {
+    const next = replaceExprSlot(stmt, ['value', 'indexAt'], numLit(9));
+    expect(printExpr(getExprSlot(next, ['value'])!)).toBe('corners[i][9]');
+    expect(printExpr(getExprSlot(stmt, ['value'])!)).toBe('corners[i][0]');
   });
 });
 

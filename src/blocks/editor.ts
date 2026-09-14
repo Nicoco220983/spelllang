@@ -501,6 +501,14 @@ export class SpellLangEditorElement extends HTMLElementBase {
         block.append(field);
         return block;
       }
+      case 'index': {
+        const block = el('span', 'expr-block');
+        block.append(this.renderSocket(stmt, path, [...sel, 'indexObject'], expr.object, null));
+        block.append(el('span', 'op', '['));
+        block.append(this.renderSocket(stmt, path, [...sel, 'indexAt'], expr.index, null));
+        block.append(el('span', 'op', ']'));
+        return block;
+      }
       case 'binary': {
         const block = el('span', 'expr-block');
         block.append(this.renderSocket(stmt, path, [...sel, 'left'], expr.left, null));

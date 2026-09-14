@@ -22,6 +22,8 @@ function containsRecordLit(expr: Expr): boolean {
       return expr.elements.some(containsRecordLit);
     case 'member':
       return containsRecordLit(expr.object);
+    case 'index':
+      return containsRecordLit(expr.object) || containsRecordLit(expr.index);
     case 'binary':
       return containsRecordLit(expr.left) || containsRecordLit(expr.right);
     case 'unary':
@@ -118,6 +120,7 @@ function exprPrec(expr: Expr): number {
       return expr.op === 'not' ? 3 : PREC.unary;
     case 'member':
     case 'callBuiltin':
+    case 'index':
       return PREC.postfix;
     default:
       return PREC.primary;
@@ -142,6 +145,8 @@ export function printExpr(expr: Expr): string {
       return `"${expr.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t')}"`;
     case 'bool':
       return String(expr.value);
+    case 'none':
+      return 'none';
     case 'enum':
       return expr.name;
     case 'list':
@@ -157,6 +162,8 @@ export function printExpr(expr: Expr): string {
       return expr.field;
     case 'member':
       return `${printExprAt(expr.object, PREC.postfix)}.${expr.field}`;
+    case 'index':
+      return `${printExprAt(expr.object, PREC.postfix)}[${printExpr(expr.index)}]`;
     case 'binary': {
       const prec = exprPrec(expr);
       // left-assoc: right side needs strictly tighter binding;

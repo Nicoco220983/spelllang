@@ -73,6 +73,20 @@ describe('<spelllang-editor>', () => {
     expect(Array.from(enumSelect.options).map((o) => o.value)).toEqual(['DIRT', 'STONE']);
   });
 
+  it('renders a complex index expression as nested blocks with [ ] sockets', () => {
+    const editor = document.createElement('spelllang-editor') as SpellLangEditorElement;
+    editor.config = config;
+    const parsed = parse('let x = xs[min(a, b) + max(c, d)]');
+    if (!parsed.ok || !parsed.program) throw new Error('must parse');
+    editor.program = parsed.program;
+    document.body.append(editor);
+    const ops = Array.from(editor.shadowRoot!.querySelectorAll('.op')).map((o) => o.textContent);
+    expect(ops).toContain('[');
+    expect(ops).toContain(']');
+    // sockets: xs + two args per min/max call = 5
+    expect(socketsOf(editor, [0])).toHaveLength(5);
+  });
+
   it('shows the palette from the callable registry', () => {
     const editor = makeEditor();
     const labels = Array.from(editor.shadowRoot!.querySelectorAll('.palette .item')).map(

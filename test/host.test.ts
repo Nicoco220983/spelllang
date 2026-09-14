@@ -45,6 +45,47 @@ describe('host: embed flow', () => {
   });
 });
 
+describe('host: ExecResult contract (P1.9)', () => {
+  it('a run without state assignment reports stateChanged: false and returns the input record by reference', () => {
+    const lang = new SpellLang(GOOD_CONFIG);
+    const parsed = lang.parse('call setVoxel(1, STONE)');
+    expect(parsed.ok).toBe(true);
+    const state = { count: 7 };
+    const result = lang.run(parsed.program!, {
+      state,
+      callablesImpl: { setVoxel: () => {} },
+    });
+    expect(result.result).toBe('ok');
+    expect(result.stateChanged).toBe(false);
+    expect(result.state).toBe(state);
+  });
+
+  it('a state assignment reports stateChanged: true with a fresh copy out', () => {
+    const lang = new SpellLang(GOOD_CONFIG);
+    const parsed = lang.parse('state.count = state.count + 1');
+    expect(parsed.ok).toBe(true);
+    const state = { count: 7 };
+    const result = lang.run(parsed.program!, {
+      state,
+      callablesImpl: { setVoxel: () => {} },
+    });
+    expect(result.stateChanged).toBe(true);
+    expect(result.state).not.toBe(state);
+    expect(result.state.count).toBe(8);
+    expect(state.count).toBe(7);
+  });
+
+  it('runtime errors carry a statement stack with source locations', () => {
+    const lang = new SpellLang(GOOD_CONFIG);
+    const parsed = lang.parse('call setVoxel(1 % 0, STONE)');
+    expect(parsed.ok).toBe(true);
+    const result = lang.run(parsed.program!, { callablesImpl: { setVoxel: () => {} } });
+    expect(result.result).toBe('runtime-error');
+    expect(result.stateChanged).toBe(false);
+    expect(result.error?.stack).toEqual([{ line: 1, col: 1, at: "call 'setVoxel'" }]);
+  });
+});
+
 describe('host: config validation fails fast', () => {
   it('types as an array throws with a pointed hint', () => {
     expect(

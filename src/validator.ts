@@ -22,6 +22,8 @@ import {
   tFloat,
   tInt,
   tList,
+  tNone,
+  tOptional,
   typeEquals,
 } from './ast.js';
 import { BUILTINS } from './builtins.js';
@@ -148,13 +150,19 @@ class Validator {
     this.checkArgs(stmt.loc, stmt.name, decl.args, decl, stmt.args);
   }
 
+  /**
+   * Check arguments against parameters, binding generic type variables
+   * (builtins only — host callables never declare them). Returns the
+   * substitution map so callers can resolve a generic return type.
+   */
   private checkArgs(
     loc: { line: number; col: number },
     name: string,
     params: CallableDecl['args'],
     _decl: CallableDecl,
     args: Expr[],
-  ): void {
+  ): Map<string, Type> {
+    const subst = new Map<string, Type>();
     const required = params.filter((p) => !p.optional).length;
     if (args.length < required || args.length > params.length) {
       this.error(
@@ -172,21 +180,55 @@ class Validator {
         return;
       }
       const argType = this.checkExpr(arg);
+      const paramType = this.bindTypeVars(param.type, argType, subst);
       const ok =
-        param.type.kind === 'vec'
+        paramType.kind === 'vec'
           ? this.isVecAssignable(argType)
-          : isAssignable(argType, param.type);
+          : isAssignable(argType, paramType);
       if (!ok) {
         this.error(
           arg.loc,
           'type-mismatch',
-          `Argument '${param.name}' of '${name}' expects ${typeName(param.type)}, found ${typeName(argType)}.`,
-          [typeName(param.type)],
+          `Argument '${param.name}' of '${name}' expects ${typeName(paramType)}, found ${typeName(argType)}.`,
+          [typeName(paramType)],
           typeName(argType),
         );
       }
       this.checkDomain(arg, param, name);
     });
+    return subst;
+  }
+
+  /**
+   * Resolve a (possibly generic) parameter type against the argument type,
+   * binding type variables in `subst` (first binding wins; `list`/`optional`
+   * are walked in parallel with the argument's shape). Unrelated shapes leave
+   * the parameter untouched so the assignability check below reports it.
+   */
+  private bindTypeVars(param: Type, arg: Type, subst: Map<string, Type>): Type {
+    if (param.kind === 'typevar') {
+      const bound = subst.get(param.id);
+      if (!bound) {
+        subst.set(param.id, arg);
+        return arg;
+      }
+      return bound;
+    }
+    if (param.kind === 'list' && arg.kind === 'list') {
+      return tList(this.bindTypeVars(param.elem, arg.elem, subst));
+    }
+    if (param.kind === 'optional' && arg.kind === 'optional') {
+      return tOptional(this.bindTypeVars(param.inner, arg.inner, subst));
+    }
+    return param;
+  }
+
+  /** Substitute bound type variables in a type; unbound ones fall back to int. */
+  private resolveTypeVars(t: Type, subst: Map<string, Type>): Type {
+    if (t.kind === 'typevar') return subst.get(t.id) ?? tInt;
+    if (t.kind === 'list') return tList(this.resolveTypeVars(t.elem, subst));
+    if (t.kind === 'optional') return tOptional(this.resolveTypeVars(t.inner, subst));
+    return t;
   }
 
   /** A value satisfies `vec` if it is a record with numeric x, y, z fields. */
@@ -231,6 +273,8 @@ class Validator {
         return { kind: 'string' };
       case 'bool':
         return tBool;
+      case 'none':
+        return tNone;
       case 'enum': {
         // `name` is the enum VALUE; find the declaring type. Already-
         // classified enum nodes re-enter here when a validated program is
@@ -280,6 +324,8 @@ class Validator {
       }
       case 'member':
         return this.checkMember(expr);
+      case 'index':
+        return this.checkIndex(expr);
       case 'unary': {
         const t = this.checkExpr(expr.operand);
         if (expr.op === 'not') {
@@ -296,8 +342,8 @@ class Validator {
         return this.checkBinary(expr);
       case 'callBuiltin': {
         const decl = BUILTINS.find((b) => b.name === expr.name)!;
-        this.checkArgs(expr.loc, expr.name, decl.args, decl, expr.args);
-        return decl.returnType;
+        const subst = this.checkArgs(expr.loc, expr.name, decl.args, decl, expr.args);
+        return this.resolveTypeVars(decl.returnType, subst);
       }
     }
   }
@@ -415,6 +461,35 @@ class Validator {
     return tInt;
   }
 
+  /**
+   * List indexing `list[i]`: the object must be a list, the index an int.
+   * A literal index into a literal list is bounds-checked statically;
+   * everything else is checked at runtime (same path as division by zero).
+   */
+  private checkIndex(expr: Extract<Expr, { kind: 'index' }>): Type {
+    const objType = this.checkExpr(expr.object);
+    const idxType = this.checkExpr(expr.index);
+    if (objType.kind !== 'list') {
+      this.error(expr.object.loc, 'type-mismatch', `Only lists can be indexed with [i]; found ${typeName(objType)}.`, ['list'], typeName(objType));
+    }
+    if (idxType.kind !== 'int') {
+      this.error(expr.index.loc, 'type-mismatch', `List index must be an int, found ${typeName(idxType)}.`, ['int'], typeName(idxType));
+    }
+    if (expr.object.kind === 'list' && expr.index.kind === 'num' && expr.index.isInt) {
+      const len = expr.object.elements.length;
+      if (expr.index.value >= len) {
+        this.error(
+          expr.loc,
+          'index-out-of-range',
+          `Index ${expr.index.value} is out of range for a list of ${len} element(s).`,
+          len > 0 ? [`0..${len - 1}`] : ['(empty list)'],
+          String(expr.index.value),
+        );
+      }
+    }
+    return objType.kind === 'list' ? objType.elem : tInt;
+  }
+
   private checkBinary(expr: Extract<Expr, { kind: 'binary' }>): Type {
     const l = this.checkExpr(expr.left);
     const r = this.checkExpr(expr.right);
@@ -425,8 +500,12 @@ class Validator {
       return tBool;
     }
     if (op === '+' || op === '-' || op === '*' || op === '/' || op === '%') {
+      // `+` also concatenates two strings; a mixed pair is an error.
+      if (op === '+' && l.kind === 'string' && r.kind === 'string') {
+        return { kind: 'string' };
+      }
       if (!isNumeric(l) || !isNumeric(r)) {
-        this.error(expr.loc, 'type-mismatch', `Operator '${op}' expects numbers, found ${typeName(l)} and ${typeName(r)}.`, ['number'], `${typeName(l)}, ${typeName(r)}`);
+        this.error(expr.loc, 'type-mismatch', `Operator '${op}' expects two numbers${op === '+' ? ' or two strings' : ''}, found ${typeName(l)} and ${typeName(r)}.`, op === '+' ? ['number + number', 'string + string'] : ['number'], `${typeName(l)}, ${typeName(r)}`);
         return tInt;
       }
       if (op === '%' && (l.kind !== 'int' || r.kind !== 'int')) {
@@ -446,8 +525,16 @@ class Validator {
     // == / !=
     if (isNumeric(l) && isNumeric(r)) return tBool;
     if (typeEquals(l, r)) return tBool;
+    // presence tests: an optional field (or none itself) may be compared
+    // against none — `e.id != none`.
+    if (this.isNoneComparable(l, r) || this.isNoneComparable(r, l)) return tBool;
     this.error(expr.loc, 'type-mismatch', `Cannot compare ${typeName(l)} with ${typeName(r)} using '${op}'.`, [typeName(l)], typeName(r));
     return tBool;
+  }
+
+  /** True when `noneSide` is none and `other` is an optional or none. */
+  private isNoneComparable(noneSide: Type, other: Type): boolean {
+    return noneSide.kind === 'none' && (other.kind === 'optional' || other.kind === 'none');
   }
 
   // -- helpers --------------------------------------------------------------
@@ -516,5 +603,7 @@ export function typeName(t: Type): string {
       return t.name;
     case 'optional':
       return `${typeName(t.inner)} | none`;
+    case 'typevar':
+      return t.id;
   }
 }

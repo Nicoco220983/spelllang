@@ -14,14 +14,17 @@ no imports, no user-defined functions — only what is listed below.
 == VALUES ==
 - numbers: 42, -7 (int), 3.14 (float). `/` on ints gives float; `%` needs ints.
 - booleans: true, false. Conditions must be booleans.
-- strings: "text" — opaque. Only compare with == and pass to functions.
+- strings: "text" — join two with +: "Hi, " + name. Never mix types ("a" +
+  1 is an error). Compare with == / != and pass to functions.
 - enums: UPPER_SNAKE names from the host registry (e.g. STONE). Never invent
   them; use only values the host lists.
-- lists: [1, 2, 3] — all elements the same type. Iterate with for; never index.
+- lists: [1, 2, 3] — all elements the same type. Iterate with for; read one
+  with xs[i] (int index, 0-based; out of range is an error).
 - objects: host records, accessed with a dot: goblin.hp. No methods.
   Construct one with a record literal: TypeName { count: 5, mode: "hard" } —
-  fields in any order, optional fields may be omitted (they become none),
-  unknown names are errors. Type and field names come from the host registry.
+  fields in any order, optional fields may be omitted (they become none;
+  test presence with e.id != none), unknown names are errors. Type and field
+  names come from the host registry.
   Inside an if condition or for iterable, a record literal must be wrapped in
   parentheses: if (SpawnOpts { count: 5 }).count > 3 { ... }
 
@@ -39,15 +42,20 @@ stop                           exit the script immediately
 
 == EXPRESSIONS ==
 Operator precedence (loosest to tightest):
-  or  |  and  |  not  |  == != < <= > >=  |  + -  |  * / %  |  -x  | a.b, f(x)
+  or  |  and  |  not  |  == != < <= > >=  |  + -  |  * / %  |  -x  | a.b, f(x), xs[i]
 - and / or short-circuit. Do not chain comparisons (a < b < c is illegal);
   write (a < b) and (b < c).
+- + on two strings joins them; + with mixed types ("a" + 1) is an error.
 - parentheses ( ) override precedence.
 - builtins (the only functions usable inside expressions):
   min(a,b) max(a,b) abs(x) floor(x) ceil(x) round(x) distance(a,b) random()
-  range(start, end)
+  range(start, end) len(xs) append(xs, x) contains(xs, x) randomInt(min, max)
+  sqrt(x)
   random() returns a float in [0,1), seeded per run (deterministic).
   range(0, 3) is [0, 1, 2] (end excluded); range(3, 0) counts down.
+  len([]) is 0. append returns a NEW list (assign it back: xs = append(xs, x)).
+  contains(xs, x) is true when x is in xs. randomInt(1, 6) is a dice roll
+  (both ends included, seeded per run).
 
 == NAMES ==
 Three kinds of names, in priority order:

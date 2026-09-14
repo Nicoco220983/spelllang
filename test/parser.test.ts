@@ -131,6 +131,39 @@ let x = [1, 2, 3,]`);
     const r = parse('let o = SpawnOpts { count: 5 }\nif (o) == o {\n  stop\n}');
     expect(r.ok).toBe(true);
   });
+
+  it('parses list indexing, chained indexing, and index-of-member', () => {
+    const r = parse('let x = a[0]\nlet y = a[i][j]\nlet z = [1, 2][0]\nlet w = a.b[0]\nlet v = a[0].b');
+    expect(r.ok).toBe(true);
+    const y = r.program!.statements[1]!;
+    if (y.kind === 'let') {
+      // a[i][j] parses as index(index(a, i), j)
+      expect(y.value).toMatchObject({ kind: 'index' });
+      expect(y.value).toMatchObject({
+        object: { kind: 'index', object: { kind: 'var', name: 'a' }, index: { kind: 'var', name: 'i' } },
+        index: { kind: 'var', name: 'j' },
+      });
+    }
+  });
+
+  it('binds indexing tighter than binary operators', () => {
+    const r = parse('let x = a[0] + b[1]');
+    expect(r.ok).toBe(true);
+    const stmt = r.program!.statements[0]!;
+    if (stmt.kind === 'let') {
+      expect(stmt.value).toMatchObject({
+        kind: 'binary',
+        op: '+',
+        left: { kind: 'index' },
+        right: { kind: 'index' },
+      });
+    }
+  });
+
+  it('parses an index expression of arbitrary complexity', () => {
+    expect(parse('let x = a[b + c * 2]').ok).toBe(true);
+    expect(parse('let x = a[len(xs) - 1]').ok).toBe(true);
+  });
 });
 
 describe('parser: errors are localized and multiple', () => {

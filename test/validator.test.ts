@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SpellLang } from '../src/host.js';
 import type { Type } from '../src/ast.js';
-import { tBool, tEnum, tInt, tRecord, type TypeDecl } from '../src/ast.js';
+import { tBool, tEnum, tInt, tList, tRecord, tString, type TypeDecl } from '../src/ast.js';
 
 const VOXEL_ENUM: TypeDecl = { kind: 'enum', values: ['AIR', 'DIRT', 'STONE', 'TORCH'] };
 
@@ -20,6 +20,15 @@ const spawnOpts: TypeDecl = {
     { name: 'count', type: tInt },
     { name: 'delay', type: { kind: 'optional', inner: tInt } },
     { name: 'mode', type: { kind: 'optional', inner: { kind: 'string' } } },
+  ],
+};
+
+/** Flattened event union, voxspell-style: presence tests via `e.id != none`. */
+const eventDecl: TypeDecl = {
+  kind: 'record',
+  fields: [
+    { name: 'kind', type: tString },
+    { name: 'id', type: { kind: 'optional', inner: tString } },
   ],
 };
 
@@ -61,9 +70,15 @@ function makeRuntime() {
       EntityKind: { kind: 'enum', values: ['goblin', 'player'] },
       entity: vec3,
       SpawnOpts: spawnOpts,
+      event: eventDecl,
     },
-    stateShape: { anger: tInt, awake: tBool },
-    contextShape: { player: tRecord('entity'), goblins: { kind: 'list', elem: tRecord('entity') } as Type },
+    stateShape: { anger: tInt, awake: tBool, guests: tList(tString) },
+    contextShape: {
+      player: tRecord('entity'),
+      goblins: { kind: 'list', elem: tRecord('entity') } as Type,
+      events: tList(tRecord('event')),
+      focus: { kind: 'optional', inner: tRecord('entity') } as Type,
+    },
   });
 }
 
@@ -229,5 +244,88 @@ if distance(p, player) < 5 {
     expect(bad.ok).toBe(false);
     expect(bad.errors[0]).toMatchObject({ code: 'type-mismatch' });
     expect(bad.errors[0]!.message).toContain("field 'count'");
+  });
+});
+
+describe('validator: P1 additions (concat, list builtins, indexing, none)', () => {
+  const rt = makeRuntime();
+
+  it('accepts string concatenation and chaining', () => {
+    const r = rt.parse('let s = "a" + "b"\nlet t = s + "c"');
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects `-` on strings and mixed `+` operands', () => {
+    expect(rt.parse('let x = "a" - "b"').errors[0]).toMatchObject({ code: 'type-mismatch' });
+    expect(rt.parse('let x = "a" + 1').errors[0]).toMatchObject({ code: 'type-mismatch' });
+  });
+
+  it('accepts append/len/contains on a list-typed state field', () => {
+    const r = rt.parse(
+      'state.guests = append(state.guests, "ada")\nlet n = len(state.guests)\nlet b = contains(state.guests, "ada")',
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects append/contains element type mismatches against the bound element type', () => {
+    expect(rt.parse('state.guests = append(state.guests, 1)').errors[0]).toMatchObject({
+      code: 'type-mismatch',
+    });
+    expect(rt.parse('let b = contains(state.guests, 2)').errors[0]).toMatchObject({
+      code: 'type-mismatch',
+    });
+  });
+
+  it('rejects append/len/contains on non-lists', () => {
+    for (const text of ['let x = append(1, 2)', 'let n = len(1)', 'let b = contains(1, 2)']) {
+      const r = rt.parse(text);
+      expect(r.ok).toBe(false);
+      expect(r.errors[0]).toMatchObject({ code: 'type-mismatch' });
+    }
+  });
+
+  it('accepts randomInt with int bounds and sqrt with numbers', () => {
+    const r = rt.parse('let x = randomInt(1, 6)\nlet y = sqrt(16.0)\nlet z = sqrt(9)');
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects randomInt with float bounds and sqrt with strings', () => {
+    expect(rt.parse('let x = randomInt(1.5, 6)').errors[0]).toMatchObject({ code: 'type-mismatch' });
+    expect(rt.parse('let y = sqrt("a")').errors[0]).toMatchObject({ code: 'type-mismatch' });
+  });
+
+  it('accepts list indexing, nested lists, and index-of-member', () => {
+    const r = rt.parse(
+      'let g = goblins[0]\nlet c = [[1, 2], [3, 4]]\nlet x = c[1][0]\nlet y = goblins[0].x',
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects indexing a non-list, a float index, and a literal out-of-range index', () => {
+    expect(rt.parse('let x = player[0]').errors[0]).toMatchObject({ code: 'type-mismatch' });
+    expect(rt.parse('let i = 1.5\nlet x = goblins[i]').errors[0]).toMatchObject({
+      code: 'type-mismatch',
+    });
+    expect(rt.parse('let x = [1, 2][5]').errors[0]).toMatchObject({ code: 'index-out-of-range' });
+  });
+
+  it('accepts optional presence tests: optional vs none and none vs none', () => {
+    const r = rt.parse('if focus != none {\n  let missing = focus == none\n  stop\n}');
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts optional-field presence tests on flattened event records', () => {
+    const r = rt.parse('for e of events {\n  if e.id != none {\n    call setVoxel(0, 0, 0, STONE)\n  }\n}');
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects comparing none with a non-optional value', () => {
+    expect(rt.parse('let b = 5 == none').errors[0]).toMatchObject({ code: 'type-mismatch' });
   });
 });
