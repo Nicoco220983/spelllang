@@ -29,6 +29,7 @@ const eventDecl: TypeDecl = {
   fields: [
     { name: 'kind', type: tString },
     { name: 'id', type: { kind: 'optional', inner: tString } },
+    { name: 'dist', type: { kind: 'optional', inner: { kind: 'float' } } },
   ],
 };
 
@@ -314,7 +315,7 @@ describe('validator: P1 additions (concat, list builtins, indexing, none)', () =
   });
 
   it('accepts optional presence tests: optional vs none and none vs none', () => {
-    const r = rt.parse('if focus != none {\n  let missing = focus == none\n  stop\n}');
+    const r = rt.parse('let top = focus == none\nif focus != none {\n  let p = focus\n  stop\n}');
     expect(r.errors).toEqual([]);
     expect(r.ok).toBe(true);
   });
@@ -323,6 +324,89 @@ describe('validator: P1 additions (concat, list builtins, indexing, none)', () =
     const r = rt.parse('for e of events {\n  if e.id != none {\n    call setVoxel(0, 0, 0, STONE)\n  }\n}');
     expect(r.errors).toEqual([]);
     expect(r.ok).toBe(true);
+  });
+
+  describe('optional-field narrowing (x != none unwraps x in the branch)', () => {
+    // guests: list<string> in stateShape; consumption via the append builtin.
+    const src = (cond: string, body: string) =>
+      `for e of events {\n  if ${cond} {\n    ${body}\n    stop\n  }\n}`;
+
+    it('unwraps the field for consumption inside the guarded branch', () => {
+      const r = rt.parse(src('e.id != none', 'state.guests = append(state.guests, e.id)'));
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('unwraps when none is on the left side', () => {
+      const r = rt.parse(src('none != e.id', 'state.guests = append(state.guests, e.id)'));
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('unwraps context optionals (focus) for member reads', () => {
+      const r = rt.parse('if focus != none {\n  let p = focus\n  call setVoxel(p.x, p.y, p.z, STONE)\n}');
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('does not unwrap outside the guarded branch', () => {
+      const r = rt.parse('let q = focus\ncall setVoxel(q.x, 0, 0, STONE)');
+      expect(r.ok).toBe(false);
+      expect(r.errors[0]).toMatchObject({ code: 'type-mismatch' });
+    });
+
+    it('does not unwrap in the else branch', () => {
+      const r = rt.parse(
+        'if focus != none {\n  let p = focus\n} else {\n  let q = focus\n  call setVoxel(q.x, 0, 0, STONE)\n}',
+      );
+      expect(r.ok).toBe(false);
+      expect(r.errors[0]).toMatchObject({ code: 'type-mismatch' });
+    });
+
+    it('rejects a redundant == none re-test on a narrowed value (dead test)', () => {
+      const r = rt.parse('if focus != none {\n  let missing = focus == none\n}');
+      expect(r.ok).toBe(false);
+      expect(r.errors[0]).toMatchObject({ code: 'type-mismatch' });
+    });
+
+    it('a shadowing let keeps its own declared type', () => {
+      // Inner binding is a fresh non-optional record; the mask makes the
+      // outer narrowing stop at the shadow (defensive: an optional-typed
+      // shadow is not expressible with today's builtins).
+      const r = rt.parse('if focus != none {\n  let focus = player\n  call setVoxel(focus.x, 0, 0, STONE)\n}');
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('sibling statements in the branch keep the narrowing', () => {
+      const r = rt.parse(
+        'if focus != none {\n  for g of goblins {\n    call setVoxel(g.x, 0, 0, STONE)\n  }\n  let p = focus\n  call setVoxel(p.x, p.y, p.z, STONE)\n}',
+      );
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('unwraps through let bindings made inside the guarded branch', () => {
+      const r = rt.parse(src('e.id != none', 'let who = e.id\n    state.guests = append(state.guests, who)'));
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('unwraps across and-chains inside the condition itself', () => {
+      // `e.dist != none and e.dist < 6.0` — the right operand of `and` is
+      // only evaluated when the left held, so the test unwraps for it.
+      const r = rt.parse(
+        'for e of events {\n  if e.id != none and e.dist != none and e.dist < 6.0 and contains(state.guests, e.id) == false {\n    state.guests = append(state.guests, e.id)\n    stop\n  }\n}',
+      );
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('does not unwrap across or-chains (left false proves nothing)', () => {
+      const r = rt.parse('let b = focus == none or focus.x > 3');
+      expect(r.ok).toBe(false);
+      expect(r.errors[0]).toMatchObject({ code: 'type-mismatch' });
+    });
   });
 
   it('rejects comparing none with a non-optional value', () => {

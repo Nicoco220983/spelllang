@@ -23,7 +23,8 @@ no imports, no user-defined functions — only what is listed below.
 - objects: host records, accessed with a dot: goblin.hp. No methods.
   Construct one with a record literal: TypeName { count: 5, mode: "hard" } —
   fields in any order, optional fields may be omitted (they become none;
-  test presence with e.id != none), unknown names are errors. Type and field
+  test presence with e.id != none — after that test, the field
+  has its plain type inside the branch: e.id is a string), unknown names are errors. Type and field
   names come from the host registry.
   Inside an if condition or for iterable, a record literal must be wrapped in
   parentheses: if (SpawnOpts { count: 5 }).count > 3 { ... }

@@ -44,6 +44,13 @@ class Validator {
   errors: SpellError[] = [];
   /** scope stack; each map: name → declared type */
   private scopes: Map<string, Type>[] = [new Map()];
+  /**
+   * Optional-field narrowings from `x != none` conditions, one map per
+   * guarded branch scope. A key maps to `true` (known non-none: unwrap the
+   * optional) or `null` (masked by a shadowing `let`/loop variable).
+   * Keys are canonical expression paths (`e.id`, `state.memo`).
+   */
+  private narrowings: Map<string, true | null>[] = [new Map()];
 
   constructor(private reg: Registry) {}
 
@@ -71,6 +78,7 @@ class Validator {
         return;
       case 'let': {
         const type = this.checkExpr(stmt.value);
+        this.maskShadowed(stmt.name);
         const scope = this.scopes[this.scopes.length - 1]!;
         if (scope.has(stmt.name)) {
           this.error(stmt.loc, 'duplicate-let', `Variable '${stmt.name}' is already declared in this block.`, undefined, stmt.name);
@@ -105,7 +113,15 @@ class Validator {
         for (const branch of stmt.branches) {
           const cond = this.checkExpr(branch.cond);
           this.requireBool(branch.cond.loc, cond, 'if condition');
+          // `x != none` in the condition unwraps x inside the branch body
+          // (sound: the body only runs when the test held). Merged into the
+          // branch's own scope map, so the narrowing pops with the scope.
+          const narrow = this.collectNarrowings(branch.cond);
           this.pushScope();
+          if (narrow.size > 0) {
+            const top = this.narrowings[this.narrowings.length - 1]!;
+            for (const [k, v] of narrow) top.set(k, v);
+          }
           for (const s of branch.body) this.checkStmt(s);
           this.popScope();
         }
@@ -122,6 +138,7 @@ class Validator {
           this.error(stmt.iterable.loc, 'type-mismatch', `'for ... of' requires a list, found ${typeName(iterType)}.`, ['list'], typeName(iterType));
         }
         this.pushScope();
+        this.maskShadowed(stmt.variable);
         this.scopes[this.scopes.length - 1]!.set(stmt.variable, iterType.kind === 'list' ? iterType.elem : tInt);
         for (const s of stmt.body) this.checkStmt(s);
         this.popScope();
@@ -266,6 +283,21 @@ class Validator {
   // -- expressions ----------------------------------------------------------
 
   private checkExpr(expr: Expr): Type {
+    const t = this.checkExprInner(expr);
+    // Optional-field narrowing: inside a branch guarded by `x != none`,
+    // x's type is its unwrapped value type.
+    const key = this.exprKey(expr);
+    if (key != null) {
+      for (let i = this.narrowings.length - 1; i >= 0; i--) {
+        const mark = this.narrowings[i]!.get(key);
+        if (mark === null) break; // shadowed by a closer let/loop binding
+        if (mark === true) return t.kind === 'optional' ? t.inner : t;
+      }
+    }
+    return t;
+  }
+
+  private checkExprInner(expr: Expr): Type {
     switch (expr.kind) {
       case 'num':
         return expr.isInt ? tInt : tFloat;
@@ -491,14 +523,37 @@ class Validator {
   }
 
   private checkBinary(expr: Extract<Expr, { kind: 'binary' }>): Type {
-    const l = this.checkExpr(expr.left);
-    const r = this.checkExpr(expr.right);
     const op = expr.op;
     if (op === 'and' || op === 'or') {
+      const l = this.checkExpr(expr.left);
       this.requireBool(expr.left.loc, l, `left operand of '${op}'`);
+      if (op === 'and') {
+        // In-condition narrowing: `x != none and f(x)` — the right operand
+        // is only evaluated when the left held, so left-side `!= none` tests
+        // unwrap for the rest of the condition.
+        const narrow = this.collectNarrowings(expr.left);
+        if (narrow.size > 0) {
+          const top = this.narrowings[this.narrowings.length - 1]!;
+          const saved = new Map<string, true | null | undefined>();
+          for (const [k, v] of narrow) {
+            saved.set(k, top.has(k) ? top.get(k)! : undefined);
+            top.set(k, v);
+          }
+          const r = this.checkExpr(expr.right);
+          for (const [k, old] of saved) {
+            if (old === undefined) top.delete(k);
+            else top.set(k, old);
+          }
+          this.requireBool(expr.right.loc, r, `right operand of '${op}'`);
+          return tBool;
+        }
+      }
+      const r = this.checkExpr(expr.right);
       this.requireBool(expr.right.loc, r, `right operand of '${op}'`);
       return tBool;
     }
+    const l = this.checkExpr(expr.left);
+    const r = this.checkExpr(expr.right);
     if (op === '+' || op === '-' || op === '*' || op === '/' || op === '%') {
       // `+` also concatenates two strings; a mixed pair is an error.
       if (op === '+' && l.kind === 'string' && r.kind === 'string') {
@@ -537,6 +592,72 @@ class Validator {
     return noneSide.kind === 'none' && (other.kind === 'optional' || other.kind === 'none');
   }
 
+  /**
+   * Canonical key for optional-field narrowing: bare names, state/context
+   * fields, and member paths (`e.id`). Anything else (calls, literals) is
+   * not narrowable and returns null.
+   */
+  private exprKey(expr: Expr): string | null {
+    switch (expr.kind) {
+      case 'var':
+        return expr.name;
+      case 'stateField':
+        return `state.${expr.field}`;
+      case 'contextField':
+        return expr.field;
+      case 'member': {
+        const k = this.exprKey(expr.object);
+        return k == null ? null : `${k}.${expr.field}`;
+      }
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Paths proven non-none inside a branch whose condition contains
+   * `path != none` (none on either side). The condition's own type check
+   * happens separately; this walk only collects keys, so no errors are
+   * duplicated.
+   */
+  private collectNarrowings(cond: Expr): Map<string, true | null> {
+    const out = new Map<string, true | null>();
+    const visit = (e: Expr): void => {
+      if (e.kind === 'binary') {
+        if (e.op === '!=') {
+          for (const side of [e.left, e.right]) {
+            if (side.kind === 'none') continue;
+            const key = this.exprKey(side);
+            if (key != null) out.set(key, true);
+          }
+        }
+        visit(e.left);
+        visit(e.right);
+      } else if (e.kind === 'unary') {
+        visit(e.operand);
+      } else if (e.kind === 'member') {
+        visit(e.object);
+      }
+    };
+    visit(cond);
+    return out;
+  }
+
+  /**
+   * A `let`/loop variable shadows any outer narrowing on the same name (and
+   * member paths rooted at it): mask in the current scope map so the inner
+   * binding's declared type wins for the rest of the block.
+   */
+  private maskShadowed(name: string): void {
+    const prefix = `${name}.`;
+    const top = this.narrowings[this.narrowings.length - 1]!;
+    for (const map of this.narrowings) {
+      for (const key of map.keys()) {
+        if (key === name || key.startsWith(prefix)) top.set(key, null);
+      }
+    }
+  }
+
   // -- helpers --------------------------------------------------------------
 
   private lookupVar(name: string): Type | null {
@@ -558,10 +679,12 @@ class Validator {
 
   private pushScope(): void {
     this.scopes.push(new Map());
+    this.narrowings.push(new Map());
   }
 
   private popScope(): void {
     this.scopes.pop();
+    this.narrowings.pop();
   }
 
   private requireBool(loc: { line: number; col: number }, t: Type, what: string): void {

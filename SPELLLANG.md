@@ -237,7 +237,8 @@ set is fixed:
 
 User functions, recursion, `while` (use `for` over `range`), dynamic typing
 beyond declared unions, exceptions/try, imports, reflection, null (use
-optional-typed host values; test presence with `!= none`).
+optional-typed host values; test presence with `!= none` — the test
+unwraps the field to its plain type inside the guarded branch).
 
 ---
 
