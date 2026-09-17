@@ -33,8 +33,9 @@ args       := (expr ("," expr)* ","?)?
 Notes:
 
 - `call` invokes a **host callable** (statement position only — no value).
-- Expression-position function calls exist only for the fixed builtin helpers
-  (`min max abs floor ceil round distance random`), see §3.
+- Expression-position function calls exist for the fixed builtin helpers
+  (`min max abs floor ceil round distance random`) **and host-registered
+  queries** (pure, value-returning host functions — see §3.1), see §3.
 - `state.<field>` refers to the host-predeclared state record. Fields are
   declared by the host, not the script; unknown fields are validation errors.
   Scripts never declare state — they read/write `state.<field>` directly.
@@ -136,7 +137,7 @@ type Expr =
   | { kind: 'index', object: Expr, index: Expr }              // list[i], 0-based
   | { kind: 'binary', op: string, left: Expr, right: Expr }
   | { kind: 'unary', op: '-' | 'not', operand: Expr }
-  | { kind: 'callBuiltin', name: string, args: Expr[] }    // fixed set only
+  | { kind: 'callBuiltin', name: string, args: Expr[] }    // builtins + host queries (callee resolved at validation; the parser is registry-free)
 ```
 
 The AST is the round-trip-stable artifact: text ⇄ AST must be lossless
@@ -148,7 +149,7 @@ validator reclassifies it in place to `stateField`, `contextField`, or
 to `Expr`). Thus `state`/`context`/enums are validation-time concepts; the
 parser only knows syntax.
 
-## 3. Builtin helper registry (fixed)
+## 3. Builtin helper registry (fixed core, host-extensible via queries)
 
 | Name | Signature | Fuel cost |
 |------|-----------|-----------|
@@ -200,13 +201,60 @@ Semantics that must be nailed down:
   seeded stream as `random()`, and requires `min <= max` (runtime error
   otherwise).
 
+### 3.1 Host query callables (expression builtins)
+
+The table above is a **fixed core** — hosts cannot add or remove those. But
+hosts can register their own **expression-callable pure functions** ("queries"),
+amending the old "fixed registry only" rule. The driver use case (voxspell
+S7): behavior scripts read the world (`getAction() -> ActionInfo`) instead of
+flattening every readable fact into `context` before every run.
+
+- **Declaration** — runtime config `queries` or `registerQuery(decl)`:
+  `{ name, args: ArgDecl[], returnType, fuelCost?, doc }` (`fuelCost` defaults
+  to 1). `returnType` and arg types are ordinary `Type` descriptors: builtin
+  kinds and host record/enum types by name (`tRecord('ActionInfo')`), so field
+  access on a query result type-checks end to end
+  (`getAction().completedTick != none`). Config validation is fail-fast:
+  duplicate names, builtin-name collisions, malformed types, and undeclared
+  enum/record references all throw at construction/registration.
+- **Same node family** — the parser is registry-free: any `IDENT(` in
+  expression position parses to the existing `callBuiltin` node, and the
+  validator resolves the callee against builtins first, then `registry.queries`.
+  No new AST node; the AST contract is unchanged. Query names cannot shadow
+  builtins (rejected at registration). A name unknown in both worlds is a
+  validation error, `unknown-query`, with builtin ∪ query candidates as
+  `expected` — the same closed-world discipline statement callables get.
+- **Impls per run** — `run(program, { ..., queryImpls })`, parallel to
+  `callablesImpl`: query name → sync function `(args: Value[]) => Value`.
+  Impls receive evaluated args and return one plain-JSON value. **Purity
+  contract: no I/O, no wall-clock, no mutation of host state** — documented
+  and host-enforced by review, not mechanically enforceable (same trust level
+  as `callablesImpl`). Queries get no `emit` helper: intent emission stays
+  statement-callable-only. A missing impl, a throw, or a wrong-shape return
+  is `invalid-call`, exactly like callables (host bug surfaced, not a script
+  fault).
+- **Fuel** — each query call burns its declared `fuelCost` (default 1) on top
+  of the per-node cost; `fuelUsed` reflects it.
+- **Copy discipline** — the returned value is deep-copied at the host API
+  edge, like `state`/`context`, so impl results can never alias host memory
+  the script could observe.
+- **Prompt rendering** — `renderPromptRegistry(callables, queries?)` appends
+  a `[queries]` group (signature + cost + doc + value domains) so LLMs call
+  them exactly like builtins.
+- **Block surface** — deferred: the editor builds its registry without
+  queries today, so query calls fail validation there (see BACKLOG.md).
+
 ## 4. Validation (static, post-parse, before any execution)
 
 All errors carry `line/col` from the node. The validator collects **all**
 errors, never stops at the first.
 
 1. **Identifiers**: unbound variables, unknown `state` fields, unknown enum
-   names, unknown callables, unknown builtins (can't happen — parser rejects).
+   names, unknown callables (statements), unknown functions in expressions
+   (`unknown-query` — the closed world is the fixed builtins ∪ host queries,
+   candidates listed). The parser is registry-free, so name resolution for
+   expression calls happens here, like every other identifier
+   reclassification.
 2. **Types**: first-assignment typing of `let` (rebinding a `let` to a
    different type = error); `state` field types are fixed by host declaration;
    operand/argument type matching; homogeneous lists; comparison operands
@@ -257,7 +305,7 @@ errors, never stops at the first.
 
 Parser errors use codes like `unexpected-token`, `unclosed-brace`,
 `expected-expression`; validator codes like `unknown-identifier`,
-`type-mismatch`, `enum-out-of-domain`, `list-too-large`. Messages are
+`unknown-query`, `type-mismatch`, `enum-out-of-domain`, `list-too-large`. Messages are
 phrased "expected X, found Y" wherever possible. Parser recovery: on error,
 skip to the next line beginning with a statement keyword and continue — the
 goal is the complete error list in one pass.
@@ -274,9 +322,9 @@ goal is the complete error list in one pass.
 - **`for` loop semantics**: iterate the list snapshot taken at loop entry
   (host can't mutate it mid-loop — values are copied into the run).
 - **Copy semantics**: values crossing the run boundary (`state`, `context`,
-  callable args/returns) are deep-copied at the host API edge. The script
-  never holds a reference to host memory. When no `state` assignment
-  executed, the unchanged input record is handed back as-is
+  callable args/returns, query returns) are deep-copied at the host API edge.
+  The script never holds a reference to host memory. When no `state`
+  assignment executed, the unchanged input record is handed back as-is
   (`stateChanged: false`).
 - **`stop`**: terminates the program immediately (result `ok`).
 - **Result object**:
@@ -302,7 +350,7 @@ goal is the complete error list in one pass.
   innermost frame first) to `error`. The stack is maintained as a push/pop
   per executed statement and snapshotted only where the failure unwinds —
   zero cost on the success path beyond O(1) bookkeeping.
-- A callable that throws / returns invalid data → `invalid-call` (host bug
+- A callable or query impl that throws / returns invalid data → `invalid-call` (host bug
   surfaced, not a script fault), run terminates.
 
 ## 7. Host API (TypeScript)
@@ -311,6 +359,7 @@ goal is the complete error list in one pass.
 const runtime = new SpellLang({
   langVersion: 1,
   callables: { /* name → declaration */ },
+  queries: { /* name → declaration (expression-callable pure functions) */ },
   types: { /* record shapes, enums, list bounds */ },
   stateShape: { /* field → type, for the state record */ },
   limits: { fuel: 10_000, callDepth: 8, stateSlots: 16, maxResults: 512, maxListLength: 4096 },
@@ -318,12 +367,13 @@ const runtime = new SpellLang({
 
 const parsed = runtime.parse(text);           // { ok, program?, errors? }
 const exec = runtime.run(parsed.program!, {
-  state, context, seed, callablesImpl,
+  state, context, seed, callablesImpl, queryImpls,
 });
 ```
 
-`renderPromptRegistry(callables)` renders declarations (signature + one-line
-doc + value domains) for system prompts, per `SPELLLANG.md` §7.
+`renderPromptRegistry(callables, queries?)` renders declarations (signature + one-line
+doc + value domains) for system prompts, per `SPELLLANG.md` §7; queries render
+in a trailing `[queries]` group.
 
 ## 8. Block surface — dual rendering (implemented)
 

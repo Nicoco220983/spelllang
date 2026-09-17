@@ -192,9 +192,20 @@ describe('parser: errors are localized and multiple', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('rejects calling a non-builtin in expression position', () => {
-    const r = parse('let x = setVoxel(0, 0, 0, DIRT)');
-    expect(r.ok).toBe(false);
+  it('parses any identifier call in expression position (registry-free; the validator resolves names)', () => {
+    // Host queries share the callBuiltin node; name resolution (builtin ∪
+    // query, suggestions on typos) happens at validation, like every other
+    // identifier reclassification.
+    const r = parse('let x = setVoxel(0, 0, 0, DIRT)\nlet y = getAction()');
+    expect(r.ok).toBe(true);
+    const stmt = r.program!.statements[0]!;
+    if (stmt.kind === 'let') {
+      expect(stmt.value).toMatchObject({ kind: 'callBuiltin', name: 'setVoxel' });
+    }
+    const query = r.program!.statements[1]!;
+    if (query.kind === 'let') {
+      expect(query.value).toMatchObject({ kind: 'callBuiltin', name: 'getAction', args: [] });
+    }
   });
 
   it('rejects record literals with missing colon or value', () => {

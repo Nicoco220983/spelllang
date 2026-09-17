@@ -9,11 +9,14 @@ import type {
   ExecResult,
   Limits,
   Program,
+  QueryDecl,
   SpellError,
   StateShape,
+  Type,
   TypeDecl,
 } from './ast.js';
 import { DEFAULT_LIMITS, LANG_VERSION } from './ast.js';
+import { isBuiltin } from './builtins.js';
 import { parse, type ParseResult } from './parser.js';
 import { validate, type Registry } from './validator.js';
 import { run, type RunInputs } from './interpreter.js';
@@ -21,6 +24,8 @@ import { run, type RunInputs } from './interpreter.js';
 export interface SpellLangConfig {
   langVersion?: number;
   callables?: CallableDecl[];
+  /** host-declared expression queries (pure, value-returning functions) */
+  queries?: QueryDecl[];
   types?: Record<string, TypeDecl>;
   /** fixed shape of the persistent state record */
   stateShape?: StateShape;
@@ -111,6 +116,31 @@ function checkShape(value: unknown, path: string): void {
   }
 }
 
+/**
+ * Queries are a closed world like builtins: enum/record type references in
+ * arg types and the return type must name a declared host type (callables
+ * keep their historical laxness — hosts may add types after construction
+ * via registerType — but queries are new surface, so they validate up front).
+ */
+function checkTypeRefs(t: Type, types: Map<string, TypeDecl>, path: string): void {
+  switch (t.kind) {
+    case 'enum':
+    case 'record':
+      if (!types.has(t.name)) {
+        throw new Error(
+          `${path} references undeclared type '${t.name}'; declare it in SpellLangConfig.types (or via registerType before registerQuery).`,
+        );
+      }
+      return;
+    case 'list':
+      checkTypeRefs(t.elem, types, `${path}.elem`);
+      return;
+    case 'optional':
+      checkTypeRefs(t.inner, types, `${path}.inner`);
+      return;
+  }
+}
+
 function checkCallable(decl: unknown, index: number): void {
   const path = `callables[${index}]`;
   if (!isPlainObject(decl)) {
@@ -141,6 +171,39 @@ function checkCallable(decl: unknown, index: number): void {
   }
 }
 
+function checkQuery(decl: unknown, path: string, types: Map<string, TypeDecl>): void {
+  if (!isPlainObject(decl)) {
+    throw new Error(`${path} must be a query declaration; got ${describeValue(decl)}.`);
+  }
+  if (typeof decl.name !== 'string' || decl.name === '') {
+    throw new Error(`${path}.name must be a non-empty string.`);
+  }
+  if (isBuiltin(decl.name)) {
+    throw new Error(`${path}.name '${decl.name}' collides with a fixed builtin; query names cannot shadow builtins.`);
+  }
+  if (!Array.isArray(decl.args)) {
+    throw new Error(`${path}.args must be an array of { name, type } entries.`);
+  }
+  decl.args.forEach((arg, j) => {
+    if (!isPlainObject(arg) || typeof arg.name !== 'string') {
+      throw new Error(`${path}.args[${j}] must have a string name.`);
+    }
+    checkType(arg.type, `${path}.args[${j}].type`);
+    checkTypeRefs(arg.type as Type, types, `${path}.args[${j}].type`);
+  });
+  checkType(decl.returnType, `${path}.returnType`);
+  checkTypeRefs(decl.returnType as Type, types, `${path}.returnType`);
+  if (
+    decl.fuelCost !== undefined &&
+    (typeof decl.fuelCost !== 'number' || !Number.isFinite(decl.fuelCost) || decl.fuelCost < 0)
+  ) {
+    throw new Error(`${path}.fuelCost must be a non-negative finite number.`);
+  }
+  if (typeof decl.doc !== 'string') {
+    throw new Error(`${path}.doc must be a string.`);
+  }
+}
+
 function checkConfig(config: SpellLangConfig): void {
   if (config.types !== undefined) {
     if (Array.isArray(config.types)) {
@@ -158,6 +221,20 @@ function checkConfig(config: SpellLangConfig): void {
       throw new Error('SpellLangConfig.callables must be an array of CallableDecl.');
     }
     config.callables.forEach(checkCallable);
+  }
+  if (config.queries !== undefined) {
+    if (!Array.isArray(config.queries)) {
+      throw new Error('SpellLangConfig.queries must be an array of QueryDecl.');
+    }
+    const typeMap = new Map(Object.entries(config.types ?? {}));
+    const seen = new Set<string>();
+    config.queries.forEach((q, i) => {
+      checkQuery(q, `queries[${i}]`, typeMap);
+      if (seen.has(q.name)) {
+        throw new Error(`queries[${i}].name '${q.name}' is declared more than once.`);
+      }
+      seen.add(q.name);
+    });
   }
   if (config.stateShape !== undefined) checkShape(config.stateShape, 'stateShape');
   if (config.contextShape !== undefined) checkShape(config.contextShape, 'contextShape');
@@ -187,6 +264,7 @@ export class SpellLang {
     }
     this.registry = {
       callables: new Map((config.callables ?? []).map((c) => [c.name, c])),
+      queries: new Map((config.queries ?? []).map((q) => [q.name, q])),
       types: new Map(Object.entries(config.types ?? {})),
       stateShape: config.stateShape ?? {},
       contextShape: config.contextShape ?? {},
@@ -196,6 +274,20 @@ export class SpellLang {
 
   registerCallable(decl: CallableDecl): void {
     this.registry.callables.set(decl.name, decl);
+  }
+
+  /**
+   * Register an expression query at runtime. Fail-fast like the constructor:
+   * the name must not shadow a fixed builtin or an already-registered query,
+   * and enum/record type references must resolve against the types declared
+   * so far (declare types first, or use the config's `queries` list).
+   */
+  registerQuery(decl: QueryDecl): void {
+    checkQuery(decl, 'query', this.registry.types);
+    if (this.registry.queries!.has(decl.name)) {
+      throw new Error(`Query '${decl.name}' is already registered.`);
+    }
+    this.registry.queries!.set(decl.name, decl);
   }
 
   registerType(name: string, decl: TypeDecl): void {
@@ -223,6 +315,7 @@ export class SpellLang {
   run(program: Program, inputs: RunInputs): ExecResult {
     return run(program, inputs, {
       callables: this.registry.callables,
+      queries: this.registry.queries,
       types: this.registry.types,
       limits: this.registry.limits,
     });
@@ -231,5 +324,10 @@ export class SpellLang {
   /** The callable registry, for prompt rendering. */
   get callables(): CallableDecl[] {
     return [...this.registry.callables.values()];
+  }
+
+  /** The query registry, for prompt rendering. */
+  get queries(): QueryDecl[] {
+    return [...this.registry.queries!.values()];
   }
 }

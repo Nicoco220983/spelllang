@@ -178,6 +178,22 @@ export interface CallableDecl {
   category?: string;
 }
 
+/**
+ * Host-declared expression query: a pure, expression-callable function
+ * (returns a value; unlike statement callables, which act via intents).
+ * Registered via the runtime config's `queries` or `registerQuery`.
+ * See DESIGN.md §3.1.
+ */
+export interface QueryDecl {
+  name: string;
+  args: ArgDecl[];
+  /** drives expression typing; host record/enum types by name are valid */
+  returnType: Type;
+  /** fuel charged per call; default 1 */
+  fuelCost?: number;
+  doc: string;
+}
+
 export interface RecordDecl {
   kind: 'record';
   fields: { name: string; type: Type }[];

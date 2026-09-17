@@ -32,7 +32,9 @@ const numGen = fc.oneof(
   // intentionally does not support (scripts never need them)
 );
 
-const builtinNameGen = fc.constantFrom(...BUILTINS.map((b) => b.name));
+// builtins ∪ host queries share the callBuiltin node — the parser is
+// registry-free, so generated call names may be any identifier
+const callNameGen = fc.constantFrom(...BUILTINS.map((b) => b.name), 'getAction', 'groundHeight');
 
 // record type names start uppercase (convention; the parser accepts any ident)
 const typeNameGen = fc.stringMatching(/^[A-Z][A-Za-z0-9_]*$/);
@@ -86,7 +88,7 @@ const exprGen: fc.Arbitrary<Expr> = fc.letrec((tie) => ({
       .tuple(tie('expr') as fc.Arbitrary<Expr>, tie('expr') as fc.Arbitrary<Expr>)
       .map(([object, index]) => ({ kind: 'index', object, index, loc }) as Expr),
     fc
-      .tuple(builtinNameGen, fc.array(tie('expr') as fc.Arbitrary<Expr>, { minLength: 0, maxLength: 2 }))
+      .tuple(callNameGen, fc.array(tie('expr') as fc.Arbitrary<Expr>, { minLength: 0, maxLength: 2 }))
       .map(([name, args]) => ({ kind: 'callBuiltin', name, args, loc }) as Expr),
   ),
   stmt: fc.oneof(

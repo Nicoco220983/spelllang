@@ -12,7 +12,6 @@ import type {
   Stmt,
 } from './ast.js';
 import { LANG_VERSION, program } from './ast.js';
-import { isBuiltin } from './builtins.js';
 
 // ---------------------------------------------------------------------------
 // Tokens
@@ -689,13 +688,12 @@ class Parser {
         expr = { kind: 'index', object: expr, index, loc: t.loc };
         continue;
       }
-      // builtin call: IDENT '(' immediately (primary was a bare var)
-      if (
-        t.kind === 'punct' &&
-        t.text === '(' &&
-        expr.kind === 'var' &&
-        isBuiltin(expr.name)
-      ) {
+      // function call: IDENT '(' immediately (primary was a bare var). The
+      // parser is registry-free: ANY identifier call parses as a callBuiltin
+      // node and the validator resolves the callee against the fixed
+      // builtins ∪ host queries (unknown names → validation error with
+      // suggestions, like every other identifier reclassification).
+      if (t.kind === 'punct' && t.text === '(' && expr.kind === 'var') {
         this.next();
         const args = this.parseArgs();
         this.expectPunct(')');
@@ -708,7 +706,7 @@ class Parser {
           col: t.loc.col,
           code: 'unexpected-token',
           message:
-            "Only the fixed builtin helpers can be called in expressions; host callables are 'call' statements.",
+            'Only builtins and host queries can be called in expressions; host actions are \'call\' statements.',
           expected: ['operator', 'end of expression'],
           found: '(',
         });

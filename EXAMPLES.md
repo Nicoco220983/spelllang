@@ -121,6 +121,24 @@ for e of events {
 tables collapse if-chains: `let corners = [[10, 10], [10, 42]]` then
 `corners[state.wp][0]`.
 
+## 8. Entity behavior — reading world state through a host query
+
+The host declares a **query** `getAction() -> ActionInfo` (a pure,
+expression-callable read) plus the record
+`ActionInfo { type: string, startedTick: int, completedTick: int? }`. Field
+access on the result type-checks like any record.
+
+```spelllang
+// Give a new order only when the current one has finished
+let a = getAction()
+if a.completedTick != none {
+    call setAction(Wander { timeout: 400 })
+}
+```
+
+Queries are called exactly like builtins (`min`, `len`, …) but are listed in
+their own `[queries]` group in the prompt registry.
+
 ## Deliberate errors (for retry-loop testing)
 
 ```spelllang

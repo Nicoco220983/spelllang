@@ -6,10 +6,12 @@
  */
 
 import type {
+  ArgDecl,
   CallableDecl,
   Expr,
   Limits,
   Program,
+  QueryDecl,
   SpellError,
   Stmt,
   Type,
@@ -30,6 +32,12 @@ import { BUILTINS } from './builtins.js';
 
 export interface Registry {
   callables: Map<string, CallableDecl>;
+  /**
+   * Host-declared expression queries. Optional so registries built by older
+   * surfaces (the block editor constructs its own) keep compiling; a missing
+   * map means "no queries declared".
+   */
+  queries?: Map<string, QueryDecl>;
   types: Map<string, TypeDecl>;
   stateShape: Record<string, Type>;
   contextShape: Record<string, Type>;
@@ -164,19 +172,19 @@ class Validator {
       for (const arg of stmt.args) this.checkExpr(arg);
       return;
     }
-    this.checkArgs(stmt.loc, stmt.name, decl.args, decl, stmt.args);
+    this.checkArgs(stmt.loc, stmt.name, decl.args, stmt.args);
   }
 
   /**
    * Check arguments against parameters, binding generic type variables
-   * (builtins only — host callables never declare them). Returns the
-   * substitution map so callers can resolve a generic return type.
+   * (builtins only — host callables and queries never declare them).
+   * Returns the substitution map so callers can resolve a generic return
+   * type.
    */
   private checkArgs(
     loc: { line: number; col: number },
     name: string,
-    params: CallableDecl['args'],
-    _decl: CallableDecl,
+    params: ArgDecl[],
     args: Expr[],
   ): Map<string, Type> {
     const subst = new Map<string, Type>();
@@ -185,7 +193,7 @@ class Validator {
       this.error(
         loc,
         'arity-mismatch',
-        `Callable '${name}' expects ${required === params.length ? `${required}` : `${required}–${params.length}`} argument(s), got ${args.length}.`,
+        `Function '${name}' expects ${required === params.length ? `${required}` : `${required}–${params.length}`} argument(s), got ${args.length}.`,
         params.map((p) => p.name),
         String(args.length),
       );
@@ -261,7 +269,7 @@ class Validator {
   }
 
   /** Value-domain checks (enums, ranges) for statically-known argument values. */
-  private checkDomain(arg: Expr, param: CallableDecl['args'][number], callableName: string): void {
+  private checkDomain(arg: Expr, param: ArgDecl, callableName: string): void {
     const d = param.domain;
     if (!d) return;
     if (d.enumValues && (arg.kind === 'enum' || arg.kind === 'str')) {
@@ -373,9 +381,32 @@ class Validator {
       case 'binary':
         return this.checkBinary(expr);
       case 'callBuiltin': {
-        const decl = BUILTINS.find((b) => b.name === expr.name)!;
-        const subst = this.checkArgs(expr.loc, expr.name, decl.args, decl, expr.args);
-        return this.resolveTypeVars(decl.returnType, subst);
+        // The callee is resolved here, not in the parser (which is
+        // registry-free): fixed builtins first, then host queries. The two
+        // share the call node — no separate AST shape for queries.
+        const builtin = BUILTINS.find((b) => b.name === expr.name);
+        if (builtin) {
+          const subst = this.checkArgs(expr.loc, expr.name, builtin.args, expr.args);
+          return this.resolveTypeVars(builtin.returnType, subst);
+        }
+        const query = this.reg.queries?.get(expr.name);
+        if (query) {
+          this.checkArgs(expr.loc, expr.name, query.args, expr.args);
+          return query.returnType;
+        }
+        const known = [
+          ...BUILTINS.map((b) => `${b.name}()`),
+          ...[...(this.reg.queries?.keys() ?? [])].map((q) => `${q}()`),
+        ];
+        this.error(
+          expr.loc,
+          'unknown-query',
+          `Unknown function '${expr.name}' in expression. Builtins and host queries are callable here; host actions are 'call' statements.`,
+          known,
+          expr.name,
+        );
+        for (const arg of expr.args) this.checkExpr(arg);
+        return tInt;
       }
     }
   }

@@ -1,9 +1,11 @@
 /**
  * renderPromptRegistry: render a host's callable registry into prompt-ready
- * text (signatures + one-line docs + value domains). See SPELLLANG.md §7.
+ * text (signatures + one-line docs + value domains). Host queries (pure,
+ * expression-callable functions) render in a trailing `[queries]` group —
+ * the LLM calls them exactly like builtins. See SPELLLANG.md §7.
  */
 
-import type { CallableDecl, Type } from './ast.js';
+import type { ArgDecl, CallableDecl, QueryDecl, Type } from './ast.js';
 
 function typeText(t: Type): string {
   switch (t.kind) {
@@ -32,14 +34,23 @@ function typeText(t: Type): string {
   }
 }
 
-function signature(decl: CallableDecl): string {
+/** The renderable core shared by callables and queries (queries omit category). */
+type Signable = {
+  name: string;
+  args: ArgDecl[];
+  returnType: Type;
+  fuelCost?: number;
+  doc: string;
+};
+
+function signature(decl: Signable): string {
   const args = decl.args
     .map((a) => `${a.name}: ${typeText(a.type)}${a.optional ? '?' : ''}`)
     .join(', ');
   return `${decl.name}(${args}) -> ${typeText(decl.returnType)}`;
 }
 
-function domainText(decl: CallableDecl): string {
+function domainText(decl: Signable): string {
   const parts: string[] = [];
   for (const arg of decl.args) {
     if (!arg.domain) continue;
@@ -52,7 +63,7 @@ function domainText(decl: CallableDecl): string {
   return parts.join('; ');
 }
 
-export function renderPromptRegistry(callables: CallableDecl[]): string {
+export function renderPromptRegistry(callables: CallableDecl[], queries: QueryDecl[] = []): string {
   const byCategory = new Map<string, CallableDecl[]>();
   for (const c of callables) {
     const cat = c.category ?? 'general';
@@ -65,6 +76,14 @@ export function renderPromptRegistry(callables: CallableDecl[]): string {
     for (const decl of decls) {
       const domain = domainText(decl);
       lines.push(`${signature(decl)}  (cost ${decl.fuelCost})`);
+      lines.push(`  ${decl.doc}${domain ? ` ${domain}.` : ''}`);
+    }
+  }
+  if (queries.length > 0) {
+    lines.push('[queries]');
+    for (const decl of queries) {
+      const domain = domainText(decl);
+      lines.push(`${signature(decl)}  (cost ${decl.fuelCost ?? 1})`);
       lines.push(`  ${decl.doc}${domain ? ` ${domain}.` : ''}`);
     }
   }

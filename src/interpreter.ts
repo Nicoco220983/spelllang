@@ -12,8 +12,10 @@ import type {
   Intent,
   Limits,
   Program,
+  QueryDecl,
   StackFrame,
   Stmt,
+  Type,
   TypeDecl,
   Value,
 } from './ast.js';
@@ -31,10 +33,18 @@ export interface RunInputs {
     string,
     (args: Value[], helpers: { emit: (intent: Intent) => void }) => Value | void
   >;
+  /**
+   * Host query implementations, injected per run (parallel to
+   * `callablesImpl`): sync pure functions — evaluated args in, one
+   * plain-JSON value out. No `emit`: queries cannot emit intents.
+   */
+  queryImpls?: Record<string, (args: Value[]) => Value>;
 }
 
 export interface RunConfig {
   callables: Map<string, CallableDecl>;
+  /** host-declared expression queries (builtins ∪ queries close the call world) */
+  queries?: Map<string, QueryDecl>;
   /** host-declared types; needed to fill omitted optional record fields with none */
   types?: Map<string, TypeDecl>;
   limits: Limits;
@@ -254,7 +264,7 @@ class Interpreter {
   }
 
   /** Host contract: returned value must match the declared return type. */
-  private checkReturnShape(decl: CallableDecl, value: Value): void {
+  private checkReturnShape(decl: { name: string; returnType: Type }, value: Value): void {
     const ok = shapeMatches(decl.returnType, value);
     if (!ok) {
       throw new RuntimeFailure(
@@ -339,7 +349,7 @@ class Interpreter {
       case 'binary':
         return this.evalBinary(expr);
       case 'callBuiltin':
-        return this.evalBuiltin(expr);
+        return this.evalCall(expr);
     }
   }
 
@@ -388,11 +398,54 @@ class Interpreter {
     }
   }
 
-  private evalBuiltin(expr: Extract<Expr, { kind: 'callBuiltin' }>): Value {
-    const decl = BUILTINS.find((b) => b.name === expr.name)!;
+  /**
+   * Expression function call: the shared `callBuiltin` node covers both the
+   * fixed builtins and host queries — the callee is resolved by name at run
+   * time (mirroring the validator). Args evaluate first (each burning fuel),
+   * then the per-call fuelCost.
+   */
+  private evalCall(expr: Extract<Expr, { kind: 'callBuiltin' }>): Value {
     const args = expr.args.map((a) => this.evalExpr(a));
-    this.burn(expr.loc, decl.fuelCost);
-    switch (expr.name) {
+    const builtin = BUILTINS.find((b) => b.name === expr.name);
+    if (builtin) {
+      this.burn(expr.loc, builtin.fuelCost);
+      return this.evalBuiltin(builtin.name, args, expr.loc);
+    }
+    return this.evalQuery(expr, args);
+  }
+
+  /**
+   * Host query call. Impls are sync and pure (host contract — no I/O, no
+   * wall-clock); the returned value is deep-copied at the host API edge like
+   * every other host-provided value, so it cannot alias host memory. A
+   * missing impl, a throw, or a wrong-shape return is `invalid-call` —
+   * exactly the discipline statement callables get.
+   */
+  private evalQuery(expr: Extract<Expr, { kind: 'callBuiltin' }>, args: Value[]): Value {
+    const decl = this.config.queries?.get(expr.name);
+    const impl = decl ? this.inputs.queryImpls?.[expr.name] : undefined;
+    if (!decl || !impl) {
+      throw new RuntimeFailure('invalid-call', `No implementation provided for query '${expr.name}'.`);
+    }
+    this.burn(expr.loc, decl.fuelCost ?? 1);
+    let returned: Value | void;
+    try {
+      returned = impl(args);
+    } catch (e) {
+      if (e instanceof RuntimeFailure) throw e;
+      // a crash inside host code is a host bug, not a script fault
+      throw new RuntimeFailure(
+        'invalid-call',
+        `Implementation of '${expr.name}' threw: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    const value: Value = deepCopy(returned === undefined ? null : returned);
+    this.checkReturnShape(decl, value);
+    return value;
+  }
+
+  private evalBuiltin(name: string, args: Value[], loc: { line: number; col: number }): Value {
+    switch (name) {
       case 'min':
         return Math.min(this.asNumber(args[0]!), this.asNumber(args[1]!));
       case 'max':
@@ -428,7 +481,7 @@ class Interpreter {
         // is safe; fuel tracks the copy, one per element
         const out: Value[] = [];
         for (const v of list) {
-          this.burn(expr.loc);
+          this.burn(loc);
           out.push(v);
         }
         out.push(args[1]!);
@@ -439,7 +492,7 @@ class Interpreter {
         const x = args[1] as Value;
         // fuel tracks the scan, one per element examined (short-circuits)
         for (const v of list) {
-          this.burn(expr.loc);
+          this.burn(loc);
           if (valuesEqual(v, x)) return true;
         }
         return false;
@@ -470,7 +523,7 @@ class Interpreter {
         return out;
       }
       default:
-        throw new RuntimeFailure('runtime-error', `Unknown builtin '${expr.name}'.`);
+        throw new RuntimeFailure('runtime-error', `Unknown builtin '${name}' (validator missed this).`);
     }
   }
 
@@ -528,7 +581,7 @@ function isObject(v: Value): v is Record<string, Value> {
 }
 
 /** Runtime shape check for host-returned values (loose, structural). */
-function shapeMatches(type: CallableDecl['returnType'], value: Value): boolean {
+function shapeMatches(type: Type, value: Value): boolean {
   switch (type.kind) {
     case 'none':
       return value === null || value === undefined;

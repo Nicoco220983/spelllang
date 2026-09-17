@@ -33,6 +33,16 @@ const eventDecl: TypeDecl = {
   ],
 };
 
+/** voxspell's standing-order read: the driver for host query callables. */
+const actionInfoDecl: TypeDecl = {
+  kind: 'record',
+  fields: [
+    { name: 'type', type: tString },
+    { name: 'startedTick', type: tInt },
+    { name: 'completedTick', type: { kind: 'optional', inner: tInt } },
+  ],
+};
+
 function makeRuntime() {
   return new SpellLang({
     callables: [
@@ -66,12 +76,32 @@ function makeRuntime() {
         category: 'world',
       },
     ],
+    queries: [
+      {
+        name: 'getAction',
+        args: [],
+        returnType: tRecord('ActionInfo'),
+        fuelCost: 1,
+        doc: 'Current standing order.',
+      },
+      {
+        name: 'groundHeight',
+        args: [
+          { name: 'x', type: tInt, domain: { min: -64, max: 64 } },
+          { name: 'z', type: tInt, domain: { min: -64, max: 64 } },
+        ],
+        returnType: tInt,
+        fuelCost: 2,
+        doc: 'Highest solid block y in a column.',
+      },
+    ],
     types: {
       VoxelType: VOXEL_ENUM,
       EntityKind: { kind: 'enum', values: ['goblin', 'player'] },
       entity: vec3,
       SpawnOpts: spawnOpts,
       event: eventDecl,
+      ActionInfo: actionInfoDecl,
     },
     stateShape: { anger: tInt, awake: tBool, guests: tList(tString) },
     contextShape: {
@@ -411,5 +441,97 @@ describe('validator: P1 additions (concat, list builtins, indexing, none)', () =
 
   it('rejects comparing none with a non-optional value', () => {
     expect(rt.parse('let b = 5 == none').errors[0]).toMatchObject({ code: 'type-mismatch' });
+  });
+});
+
+describe('validator: host queries (expression callables)', () => {
+  const rt = makeRuntime();
+
+  it('accepts a query call in an expression and fields on its record-typed result', () => {
+    const r = rt.parse(
+      'let a = getAction()\nlet t = a.type\nlet n = a.startedTick + 1\nlet h = groundHeight(0, 0) * 2',
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts comparing a none-able record field of the result with none', () => {
+    const r = rt.parse('if getAction().completedTick != none {\n  call setVoxel(0, 0, 0, STONE)\n}');
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('drives typing from returnType: optional fields reject arithmetic', () => {
+    // completedTick is `int | none` — the presence test is fine, `+ 1` is not.
+    expect(rt.parse('let x = getAction().completedTick + 1').errors[0]).toMatchObject({
+      code: 'type-mismatch',
+    });
+    expect(rt.parse('let ok = getAction().completedTick != none').errors).toEqual([]);
+  });
+
+  it('rejects an unknown function in expression position, with suggestions', () => {
+    const r = rt.parse('let x = getActon()');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({ code: 'unknown-query', found: 'getActon' });
+    expect(r.errors[0]!.expected).toContain('getAction()');
+    expect(r.errors[0]!.expected).toContain('min()');
+  });
+
+  it('suggests builtins alongside queries for unknown names', () => {
+    const r = rt.parse('let x = ln(4)');
+    expect(r.errors[0]).toMatchObject({ code: 'unknown-query', found: 'ln' });
+    expect(r.errors[0]!.expected).toContain('len()');
+  });
+
+  it('rejects calling a statement callable in an expression, hinting at call', () => {
+    const r = rt.parse('let x = setVoxel(0, 0, 0, STONE)');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({ code: 'unknown-query', found: 'setVoxel' });
+    expect(r.errors[0]!.message).toContain("'call' statements");
+    // statement callables are not valid expression callees — not suggested
+    expect(r.errors[0]!.expected).not.toContain('setVoxel()');
+  });
+
+  it('rejects calling a query as a statement (queries are expression-only)', () => {
+    const r = rt.parse('call getAction()');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({ code: 'unknown-callable', found: 'getAction' });
+  });
+
+  it('rejects arity mismatches on queries', () => {
+    expect(rt.parse('let h = groundHeight(0)').errors[0]).toMatchObject({
+      code: 'arity-mismatch',
+    });
+    expect(rt.parse('let h = groundHeight(0, 0, 0)').errors[0]).toMatchObject({
+      code: 'arity-mismatch',
+    });
+    expect(rt.parse('let a = getAction(1)').errors[0]).toMatchObject({ code: 'arity-mismatch' });
+  });
+
+  it('rejects argument type mismatches on queries', () => {
+    const r = rt.parse('let h = groundHeight("a", 0)');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({ code: 'type-mismatch' });
+    expect(r.errors[0]!.message).toContain("'x'");
+  });
+
+  it('rejects value-domain violations on literal query args', () => {
+    const r = rt.parse('let h = groundHeight(0, 999)');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({ code: 'out-of-range' });
+  });
+
+  it('rejects member access on a non-record query result', () => {
+    const r = rt.parse('let h = groundHeight(0, 0).x');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({ code: 'type-mismatch' });
+  });
+
+  it('lets a query result flow through let bindings inside a guarded branch', () => {
+    const r = rt.parse(
+      'let a = getAction()\nif a.completedTick != none {\n  state.anger = a.startedTick\n}',
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
   });
 });

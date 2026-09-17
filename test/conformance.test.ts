@@ -73,6 +73,8 @@ describe('conformance: invalid programs are rejected with localized errors', () 
     ['record literal unknown type', 'let o = NoSuchType { count: 5 }'],
     ['record literal unknown field', 'let o = SpawnOpts { count: 5, nosuch: 1 }'],
     ['record literal missing required field', 'let o = SpawnOpts { mode: "x" }'],
+    ['unknown function in expression', 'let x = nope_fn(1)'],
+    ['statement callable in expression', 'let x = setVoxel(0, 0, 0)'],
   ];
 
   it.each(cases)('rejects: %s', (_name, text) => {
@@ -132,6 +134,73 @@ describe('conformance: P1 surface is accepted', () => {
 
   it.each(cases)('accepts: %s', (_name, text) => {
     expect(runtime().parse(text).ok).toBe(true);
+  });
+});
+
+describe('conformance: host queries are accepted and run', () => {
+  function queryRuntime() {
+    return new SpellLang({
+      callables: [
+        {
+          name: 'setVoxel',
+          args: [{ name: 'x', type: tInt }],
+          returnType: { kind: 'none' },
+          fuelCost: 1,
+          doc: 'Place a voxel.',
+        },
+      ],
+      stateShape: { n: tInt },
+      queries: [
+        {
+          name: 'getAction',
+          args: [],
+          returnType: { kind: 'record', name: 'ActionInfo' },
+          doc: 'Current standing order.',
+        },
+      ],
+      types: {
+        ActionInfo: {
+          kind: 'record',
+          fields: [
+            { name: 'type', type: { kind: 'string' } },
+            { name: 'startedTick', type: tInt },
+            { name: 'completedTick', type: { kind: 'optional', inner: tInt } },
+          ],
+        },
+      },
+    });
+  }
+
+  it('accepts: query call with record-typed result field access', () => {
+    const r = queryRuntime().parse(
+      'let a = getAction()\nif a.completedTick != none {\n call setVoxel(a.startedTick)\n}',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects: unknown query name with localized suggestions', () => {
+    const r = queryRuntime().parse('let a = getActoin()');
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatchObject({ code: 'unknown-query', line: 1, found: 'getActoin' });
+    expect(r.errors[0]!.expected).toContain('getAction()');
+  });
+
+  it('runs: query impl result flows through a presence test to intents', () => {
+    const rt = queryRuntime();
+    const r = rt.parse('let a = getAction()\nif a.completedTick != none {\n call setVoxel(a.startedTick)\n}');
+    expect(r.ok).toBe(true);
+    const intents: Value[] = [];
+    const done = rt.run(r.program!, {
+      callablesImpl: { setVoxel: (args, { emit }) => emit(args[0]) },
+      queryImpls: { getAction: () => ({ type: 'Idle', startedTick: 3, completedTick: 12 }) },
+    });
+    expect(done.result).toBe('ok');
+    expect(done.intents).toEqual([3]);
+    const pending = rt.run(r.program!, {
+      callablesImpl: { setVoxel: (args, { emit }) => emit(args[0]) },
+      queryImpls: { getAction: () => ({ type: 'WalkTo', startedTick: 3, completedTick: null }) },
+    });
+    expect(pending.intents).toEqual([]);
   });
 });
 
@@ -202,5 +271,56 @@ describe('conformance: prompt registry rendering', () => {
     expect(text).toContain('[world]');
     expect(text).toContain('type ∈ {DIRT, STONE}');
     expect(text).toContain('(cost 2)');
+  });
+
+  it('renders host queries in their own [queries] section, after callables', () => {
+    const rt = new SpellLang({
+      types: {
+        ActionInfo: {
+          kind: 'record',
+          fields: [{ name: 'type', type: { kind: 'string' } }],
+        },
+      },
+      callables: [
+        {
+          name: 'setVoxel',
+          args: [{ name: 'x', type: tInt }],
+          returnType: { kind: 'none' },
+          fuelCost: 1,
+          doc: 'Place a voxel.',
+        },
+      ],
+      queries: [
+        {
+          name: 'getAction',
+          args: [],
+          returnType: { kind: 'record', name: 'ActionInfo' },
+          fuelCost: 2,
+          doc: 'Current standing order.',
+        },
+        {
+          name: 'groundHeight',
+          args: [
+            { name: 'x', type: tInt, domain: { min: -64, max: 64 } },
+            { name: 'z', type: tInt },
+          ],
+          returnType: tInt,
+          doc: 'Highest solid y.',
+        },
+      ],
+    });
+    const text = renderPromptRegistry(rt.callables, rt.queries);
+    expect(text).toContain('[queries]');
+    expect(text).toContain('getAction() -> ActionInfo  (cost 2)');
+    expect(text).toContain('Current standing order.');
+    expect(text).toContain('groundHeight(x: int, z: int) -> int  (cost 1)');
+    expect(text).toContain('x in [-64, 64]');
+    // queries come after the callable sections
+    expect(text.indexOf('[queries]')).toBeGreaterThan(0);
+  });
+
+  it('omits the [queries] section when the host declares no queries', () => {
+    const text = renderPromptRegistry(runtime().callables);
+    expect(text).not.toContain('[queries]');
   });
 });

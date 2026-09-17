@@ -1,6 +1,7 @@
 /**
- * Fixed builtin helper registry (expressions only — hosts cannot add or
- * remove these; they add callables instead). See DESIGN.md §3.
+ * Fixed core builtin helper registry (expressions only — hosts cannot add
+ * or remove these; for expression-callable host functions they register
+ * queries instead, see DESIGN.md §3.1). See DESIGN.md §3.
  */
 
 import type { CallableDecl, Type } from './ast.js';

@@ -121,6 +121,7 @@ Sketch (language-agnostic; final API in TS, compiled to JS, ESM):
 const runtime = new SpellLang({
   langVersion: 1,
   callables: { ...host-defined helpers... },
+  queries: { ...host-defined pure expression functions... },
   types: { ...host-defined data types (records/enums)... },
   limits: { fuel: 10_000, callDepth: 8, stateSlots: 16, maxResults: 512 },
 });
@@ -135,6 +136,7 @@ const exec = runtime.run(program, {
   state,          // opaque host-managed per-script state handle
   context,        // per-invocation data (tick number, target position, entity set...)
   callablesImpl,  // host implementations, injected per run (enables per-world scoping)
+  queryImpls,     // host query implementations, injected per run (parallel channel)
 });
 // exec.result: 'ok' | 'out-of-fuel' | 'runtime-error' | 'invalid-call'
 // exec.intents / exec.state (updated; runs that assigned nothing return the
@@ -149,7 +151,11 @@ Key properties:
   construction** and implemented per-run. Declaration is used for static
   validation (unknown call = parse/validation error, never a runtime
   surprise) and for LLM prompt generation (the host can *render its
-  callable registry into the system prompt automatically*).
+  callable registry into the system prompt automatically*). The same holds
+  for **queries** — pure, expression-callable functions declared at
+  construction (config `queries` / `registerQuery`) and implemented per run
+  via `queryImpls`; unknown names in expressions are validation errors with
+  typo suggestions, in the same closed world as builtins.
 - **State is host-managed**: the runtime only sees a typed, fixed-shape state
   record declared by the host. Scripts get scoped `let` slots (bounded,
   typed); nothing else persists.
@@ -174,6 +180,29 @@ runtime.registerCallable({
 Static validation must check arity and *value domains* where declared
 (enums, ranges, non-null). This recreates — generically — the voxel-type
 validation VoxSpell currently does server-side for generated JS.
+
+Expression **queries** are declared the same way (minus `category`), via the
+config's `queries` list or `registerQuery`:
+
+```ts
+runtime.registerQuery({
+  name: 'getAction',               // callable in expressions, unlike callables
+  args: [],
+  returnType: tRecord('ActionInfo'),  // host record types are valid here (and in arg types)
+  fuelCost: 1,                     // optional; default 1
+  doc: 'The entity\'s current standing order.',
+});
+```
+
+Queries share the expression-call surface with the fixed builtins (the same
+`callBuiltin` AST node — no new node), so `returnType` drives expression
+typing end to end: `let a = getAction()` then `a.completedTick != none`
+type-checks against the declared record fields. Per-run implementations are
+sync and **pure** (no I/O, no wall-clock — a documented host contract):
+`queryImpls: { name: (args) => value }`, injected per run like
+`callablesImpl`. Fuel is charged per call; results are deep-copied at the
+host API edge; a missing impl or bad return is `invalid-call`, exactly like
+callables. Query names cannot shadow builtins.
 
 ### 4.3 Invocation
 
@@ -224,11 +253,12 @@ set is fixed:
 - Arithmetic `+ - * / %` (`+` also concatenates two strings; mixed operand
   pairs are validation errors), comparison `< <= == != >= >`, logic
   `and or not`, parentheses. Short-circuit semantics fixed and documented.
-- A **small fixed library** of pure helpers (host cannot add expression
-  operators; hosts add *callables* instead): `min max abs floor ceil round
-  distance(a,b) random()` (seeded — see §6), `range(start, end)` (list of
-  ints, half-open), `len append contains randomInt sqrt` (list helpers —
-  `append`/`contains` are generic over the list element type).
+- A **small core library** of pure helpers, host-extensible with *query
+  callables* (expression-callable pure functions — §4.2; hosts cannot add
+  expression *operators*): `min max abs floor ceil round distance(a,b)
+  random()` (seeded — see §6), `range(start, end)` (list of ints, half-open),
+  `len append contains randomInt sqrt` (list helpers — `append`/`contains`
+  are generic over the list element type).
 - Member access on objects via declared fields only; list elements via `for`
   iteration or 0-based indexing (`list[i]`, bounds-checked — a validation
   error for literal lists with literal indexes, a runtime error otherwise).
@@ -270,9 +300,9 @@ The language project must ship, as a deliverable, an **LLM integration kit**:
   pasted into a system prompt.
 - `EXAMPLES.md`: 3–4 canonical annotated programs per major use case
   (structure generation, entity behavior, …).
-- `renderPromptRegistry(callables)`: function that renders a host's callable
-  registry into prompt-ready text (signatures + one-line docs + value
-  domains).
+- `renderPromptRegistry(callables, queries?)`: function that renders a host's
+  callable registry into prompt-ready text (signatures + one-line docs +
+  value domains); queries render in a trailing `[queries]` group.
 - **Validation feedback spec**: exact error JSON format so hosts can
   implement generate → parse → (on failure) feed errors back to the LLM →
   regenerate. Retry guidance: errors are line/col-localized and phrased for
@@ -317,11 +347,12 @@ spelllang/
 │   ├── ast.ts           # node types + static types + versioning
 │   ├── parser.ts        # text -> AST, error JSON, multi-error recovery
 │   ├── printer.ts       # AST -> canonical text (round-trip)
-│   ├── validator.ts     # static checks incl. callable registry
-│   ├── builtins.ts      # fixed builtin helper registry
+│   ├── validator.ts     # static checks incl. callable + query registry
+│   ├── builtins.ts      # fixed core builtin helper registry (hosts extend
+│   │                    #   expressions via queries, see DESIGN.md §3.1)
 │   ├── interpreter.ts   # fuel-bounded, deterministic exec
-│   ├── host.ts          # runtime construction, callable registration
-│   ├── prompt.ts        # renderPromptRegistry
+│   ├── host.ts          # runtime construction, callable/query registration
+│   ├── prompt.ts        # renderPromptRegistry (callables + [queries])
 │   └── blocks/          # block surface (`spelllang/blocks` subpath):
 │       ├── mapping.ts   #   socket render rule, palette model, AST path edits
 │       ├── editor.ts    #   <spelllang-editor> custom element (zero-dep)

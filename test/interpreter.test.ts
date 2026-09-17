@@ -394,3 +394,173 @@ describe('interpreter: P1 additions', () => {
     expect(exec.error?.stack?.at(-1)).toMatchObject({ line: 1, col: 1, at: "for 'i'" });
   });
 });
+
+describe('interpreter: host queries (expression callables)', () => {
+  const actionInfo = {
+    kind: 'record' as const,
+    fields: [
+      { name: 'type', type: tString },
+      { name: 'startedTick', type: tInt },
+      { name: 'completedTick', type: { kind: 'optional' as const, inner: tInt } },
+    ],
+  };
+
+  function makeQueryRuntime(limits?: { fuel?: number }) {
+    return new SpellLang({
+      types: { ActionInfo: actionInfo },
+      stateShape: { counter: tInt, memo: { kind: 'record', name: 'ActionInfo' } },
+      limits,
+      queries: [
+        {
+          name: 'getAction',
+          args: [],
+          returnType: { kind: 'record', name: 'ActionInfo' },
+          doc: 'Current standing order.',
+        },
+        {
+          name: 'groundHeight',
+          args: [
+            { name: 'x', type: tInt },
+            { name: 'z', type: tInt },
+          ],
+          returnType: tInt,
+          fuelCost: 2,
+          doc: 'Highest solid block y.',
+        },
+      ],
+    });
+  }
+
+  it('impl result flows into expressions, conditions, and state', () => {
+    const rt = makeQueryRuntime();
+    const r = rt.parse(
+      'let a = getAction()\nif a.completedTick != none {\n  state.counter = 99\n}\nstate.counter = a.startedTick + 1',
+    );
+    expect(r.ok).toBe(true);
+    const exec = rt.run(r.program!, {
+      callablesImpl: {},
+      state: { counter: 0, memo: { type: '', startedTick: 0, completedTick: null } },
+      queryImpls: {
+        getAction: () => ({ type: 'Wander', startedTick: 41, completedTick: null }),
+      },
+    });
+    expect(exec.result).toBe('ok');
+    expect(exec.state.counter).toBe(42);
+  });
+
+  it('charges fuel per query call (declared fuelCost, default 1)', () => {
+    const rt = makeQueryRuntime();
+    // groundHeight costs 2: let(1) + call node(1) + cost(2) + two num args(2) = 6
+    const r = rt.parse('let h = groundHeight(1, 2)');
+    expect(r.ok).toBe(true);
+    const exec = rt.run(r.program!, {
+      callablesImpl: {},
+      queryImpls: { groundHeight: () => 3 },
+    });
+    expect(exec.result).toBe('ok');
+    expect(exec.fuelUsed).toBe(6);
+    // getAction omits fuelCost → default 1: let(1) + call node(1) + cost(1) = 3
+    const r2 = rt.parse('let a = getAction()');
+    const exec2 = rt.run(r2.program!, {
+      callablesImpl: {},
+      queryImpls: { getAction: () => ({ type: 'Idle', startedTick: 0, completedTick: null }) },
+    });
+    expect(exec2.result).toBe('ok');
+    expect(exec2.fuelUsed).toBe(3);
+  });
+
+  it('runs out of fuel deterministically when queries drain the budget', () => {
+    const rt = new SpellLang({
+      stateShape: { counter: tInt },
+      queries: [{ name: 'tick', args: [], returnType: tInt, fuelCost: 5, doc: 'x' }],
+      limits: { fuel: 20 },
+    });
+    const r = rt.parse('for i of range(0, 100) {\n  state.counter = tick()\n}');
+    expect(r.ok).toBe(true);
+    const inputs = { callablesImpl: {}, queryImpls: { tick: () => 1 }, state: { counter: 0 } };
+    const e1 = rt.run(r.program!, inputs);
+    const e2 = rt.run(r.program!, inputs);
+    expect(e1.result).toBe('out-of-fuel');
+    expect(e1.fuelUsed).toBe(e2.fuelUsed);
+    expect(e1.state).toEqual(e2.state);
+  });
+
+  it('deep-copies the impl result at the host API edge (no aliasing host memory)', () => {
+    const rt = makeQueryRuntime();
+    // Scripts cannot mutate records yet, but the copy discipline is pinned
+    // for that future surface: the value the script holds must never be the
+    // host's own object.
+    const hostHeld = { type: 'Wander', startedTick: 5, completedTick: null };
+    const r = rt.parse('state.memo = getAction()');
+    expect(r.ok).toBe(true);
+    const exec = rt.run(r.program!, {
+      callablesImpl: {},
+      state: { counter: 0, memo: { type: '', startedTick: 0, completedTick: null } },
+      queryImpls: { getAction: () => hostHeld },
+    });
+    expect(exec.result).toBe('ok');
+    hostHeld.type = 'MUTATED';
+    hostHeld.startedTick = 999;
+    expect(exec.state.memo).toEqual({ type: 'Wander', startedTick: 5, completedTick: null });
+  });
+
+  it('a missing impl, a throwing impl, and a wrong-shape return are invalid-call', () => {
+    const rt = makeQueryRuntime();
+    const parsed = rt.parse('state.counter = groundHeight(0, 0)');
+    expect(parsed.ok).toBe(true);
+
+    const missing = rt.run(parsed.program!, { callablesImpl: {}, queryImpls: {} });
+    expect(missing.result).toBe('invalid-call');
+    expect(missing.error?.message).toContain("No implementation provided for query 'groundHeight'");
+
+    const throwing = rt.run(parsed.program!, {
+      callablesImpl: {},
+      queryImpls: {
+        groundHeight: () => {
+          throw new Error('kaput');
+        },
+      },
+    });
+    expect(throwing.result).toBe('invalid-call');
+    expect(throwing.error?.message).toContain('threw: kaput');
+
+    const wrongShape = rt.run(parsed.program!, {
+      callablesImpl: {},
+      queryImpls: { groundHeight: () => 'not a number' as unknown as number },
+    });
+    expect(wrongShape.result).toBe('invalid-call');
+  });
+
+  it('impls receive evaluated args (values, not expressions)', () => {
+    const rt = makeQueryRuntime();
+    const seen: unknown[] = [];
+    const r = rt.parse('state.counter = 10\nlet h = groundHeight(state.counter, 2 * 3)');
+    expect(r.ok).toBe(true);
+    const exec = rt.run(r.program!, {
+      callablesImpl: {},
+      state: { counter: 0, memo: { type: '', startedTick: 0, completedTick: null } },
+      queryImpls: {
+        groundHeight: (args) => {
+          seen.push(args);
+          return 0;
+        },
+      },
+    });
+    expect(exec.result).toBe('ok');
+    expect(seen).toEqual([[10, 6]]);
+  });
+
+  it('same script + same query impl inputs = same outputs (deterministic)', () => {
+    const rt = makeQueryRuntime();
+    const r = rt.parse('state.counter = groundHeight(state.counter, 0)');
+    expect(r.ok).toBe(true);
+    const inputs = {
+      callablesImpl: {},
+      state: { counter: 1, memo: { type: '', startedTick: 0, completedTick: null } },
+      queryImpls: { groundHeight: () => 7 },
+    };
+    const e1 = rt.run(r.program!, inputs);
+    const e2 = rt.run(r.program!, inputs);
+    expect(JSON.stringify(e1)).toBe(JSON.stringify(e2));
+  });
+});

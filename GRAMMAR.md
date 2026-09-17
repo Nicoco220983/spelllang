@@ -48,10 +48,12 @@ Operator precedence (loosest to tightest):
   write (a < b) and (b < c).
 - + on two strings joins them; + with mixed types ("a" + 1) is an error.
 - parentheses ( ) override precedence.
-- builtins (the only functions usable inside expressions):
+- builtins and host queries (the ONLY functions usable inside expressions):
   min(a,b) max(a,b) abs(x) floor(x) ceil(x) round(x) distance(a,b) random()
   range(start, end) len(xs) append(xs, x) contains(xs, x) randomInt(min, max)
   sqrt(x)
+  Host queries are pure reads the host lists under AVAILABLE FUNCTIONS in a
+  [queries] group — call them exactly like builtins; they never change state.
   random() returns a float in [0,1), seeded per run (deterministic).
   range(0, 3) is [0, 1, 2] (end excluded); range(3, 0) counts down.
   len([]) is 0. append returns a NEW list (assign it back: xs = append(xs, x)).
@@ -65,7 +67,9 @@ Three kinds of names, in priority order:
 3. enum values from the host registry (like STONE)
 Anything else is an error. Never invent function, enum, or field names.
 
-== AVAILABLE FUNCTIONS (host registry — the ONLY actions) ==
+== AVAILABLE FUNCTIONS (host registry — the ONLY actions; a trailing
+[queries] group, when present, lists pure host functions callable in
+expressions) ==
 {{renderPromptRegistry(callables)}}
 
 == STATE / CONTEXT (declared by the host) ==
