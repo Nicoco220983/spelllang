@@ -246,6 +246,53 @@ export function len(target) {
 }
 
 /**
+ * Generates a list of numbers in a range [start, end).
+ * Supports range(end), range(start, end), and range(start, end, step).
+ * @param {number} start Start number (or end if only one argument is provided)
+ * @param {number} [end] End number (exclusive)
+ * @param {number} [step] Step increment
+ * @returns {Array<number>}
+ */
+export function range(start, end, step) {
+    if (typeof start !== 'number' || Number.isNaN(start)) return [];
+
+    let from = start;
+    let to = end;
+    let s = step;
+
+    if (to === undefined) {
+        from = 0;
+        to = start;
+    }
+
+    if (typeof to !== 'number' || Number.isNaN(to)) return [];
+
+    if (s === undefined) {
+        s = from <= to ? 1 : -1;
+    }
+
+    if (typeof s !== 'number' || Number.isNaN(s) || s === 0) return [];
+
+    const result = [];
+    const maxIterations = 100000;
+    let iterations = 0;
+
+    if (s > 0) {
+        for (let i = from; i < to; i += s) {
+            result.push(i);
+            if (++iterations >= maxIterations) break;
+        }
+    } else {
+        for (let i = from; i > to; i += s) {
+            result.push(i);
+            if (++iterations >= maxIterations) break;
+        }
+    }
+
+    return result;
+}
+
+/**
  * Safely accesses a property from a map/object.
  * @param {Object} obj
  * @param {string} key
@@ -322,6 +369,7 @@ export const BUILTINS = {
     head,
     tail,
     len,
+    range,
     get,
     abs,
     floor,

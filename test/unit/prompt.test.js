@@ -31,5 +31,6 @@ test('prompt: generates complete prompt from schema', () => {
     assert.match(prompt, /state\.last_breach_room.*Str/);
     assert.match(prompt, /Focus on energy saving during daytime hours\./);
     assert.match(prompt, /filter\(list: List, predicate: Fn\): List/);
+    assert.match(prompt, /range\(start: Num, end: Num, step\?: Num\): List<Num>/);
     assert.match(prompt, /clamp\(val: Num, min: Num, max: Num\): Num/);
 });

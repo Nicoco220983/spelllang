@@ -42,6 +42,23 @@ test('builtins: list operations', () => {
     assert.equal(b.len([1, 2, 3]), 3);
     assert.equal(b.len("hello"), 5);
 
+    assert.deepEqual(b.range(5), [0, 1, 2, 3, 4]);
+    assert.deepEqual(b.range(1, 5), [1, 2, 3, 4]);
+    assert.deepEqual(b.range(0, 10, 2), [0, 2, 4, 6, 8]);
+    assert.deepEqual(b.range(5, 0), [5, 4, 3, 2, 1]);
+    assert.deepEqual(b.range(5, 0, -1), [5, 4, 3, 2, 1]);
+    assert.deepEqual(b.range(10, 0, -2), [10, 8, 6, 4, 2]);
+    assert.deepEqual(b.range(5, 5), []);
+    assert.deepEqual(b.range(0), []);
+    assert.deepEqual(b.range(5, 1, 1), []);
+    assert.deepEqual(b.range(1, 5, -1), []);
+    assert.deepEqual(b.range(1, 5, 0), []);
+    assert.deepEqual(b.range(-3), [0, -1, -2]);
+    assert.deepEqual(b.range(-2, 2), [-2, -1, 0, 1]);
+    assert.deepEqual(b.range(null), []);
+    assert.deepEqual(b.range("abc"), []);
+    assert.deepEqual(b.range(1, "abc"), []);
+
     assert.equal(b.get({ a: 100 }, "a"), 100);
     assert.equal(b.get({ a: 100 }, "b", "default"), "default");
 });

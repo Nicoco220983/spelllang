@@ -129,3 +129,37 @@ test('e2e: executes eco_optimizer with clamp and round', () => {
     assert.equal(updated.last_avg_temp, 28);
     assert.deepEqual(devicesTurnedOff, [{ id: 'ac1', active: false }]);
 });
+
+test('e2e: executes loops using range builtin with map and reduce', () => {
+    const code = `
+    range(1, 4) |> map(fn(i: Num) {
+        notify("Attempt " + i, 1)
+    })
+
+    let sum1To10 = range(1, 11) |> sum()
+    state.sum = sum1To10
+
+    let countdown = range(5, 0) |> reduce("", fn(acc: Str, n: Num) {
+        acc + n + " "
+    })
+    state.countdown = trim(countdown)
+    `;
+
+    const notifications = [];
+    const context = {
+        notify: (msg, prio) => {
+            notifications.push({ msg, prio });
+            return true;
+        }
+    };
+    const state = {};
+    const updated = run(code, { context, state });
+
+    assert.deepEqual(notifications, [
+        { msg: 'Attempt 1', prio: 1 },
+        { msg: 'Attempt 2', prio: 1 },
+        { msg: 'Attempt 3', prio: 1 }
+    ]);
+    assert.equal(updated.sum, 55);
+    assert.equal(updated.countdown, '5 4 3 2 1');
+});

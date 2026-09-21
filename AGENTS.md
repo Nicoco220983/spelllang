@@ -9,7 +9,7 @@ This document serves as the primary system prompt and architectural guideline fo
 
 ## 2. Core Design Principles
 *   **Zero Hallucination Tolerance:** No external imports, no imaginary standard libraries, and no meta-programming. 
-*   **Rich Standard Library for Lean Prompts:** To maximize scripting capabilities while keeping the LLM API prompt short, spelllang natively provides common utility and math functions (e.g., `min`, `max`, `cos`, `filter`, `map`, `clamp`, `reduce`). This empowers the script without cluttering the host context schema.
+*   **Rich Standard Library for Lean Prompts:** To maximize scripting capabilities while keeping the LLM API prompt short, spelllang natively provides common utility and math functions (e.g., `min`, `max`, `cos`, `filter`, `map`, `clamp`, `reduce`, `range`). This empowers the script without cluttering the host context schema.
 *   **Direct Host Injection:** Host functions are injected directly into the global scope—no `app.` prefix is used.
 *   **Pipeline-First:** Nested parentheses are error-prone for LLMs and hard to map to visual blocks. Chained operations must use the pipeline operator `|>`.
 *   **Strong, Silent Typing:** Types are strictly enforced at compile time to ensure safe execution. Types are inferred from assignment. Explicit type annotations are restricted exclusively to custom function arguments.

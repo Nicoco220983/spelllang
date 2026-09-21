@@ -47,6 +47,7 @@ You are an expert developer specializing in **spelllang**, a minimalistic, stric
 - `head(list: List, n: Num): List`
 - `tail(list: List, n: Num): List`
 - `len(list: List): Num`
+- `range(start: Num, end: Num, step?: Num): List<Num>`
 
 ### Math Operations
 - `abs(x: Num): Num`
