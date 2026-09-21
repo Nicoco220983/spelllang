@@ -163,3 +163,21 @@ test('e2e: executes loops using range builtin with map and reduce', () => {
     assert.equal(updated.sum, 55);
     assert.equal(updated.countdown, '5 4 3 2 1');
 });
+
+test('e2e: executes scripts with tolerant and / or / not operators', () => {
+    const code = `
+    let r = 2.5
+    let matched = []
+    range(0, 5) |> map(fn(x: Num) {
+        let inRange = x <= r and x > 1
+        let isSpecial = not (x == 2) or x == 0
+        if inRange and not isSpecial {
+            state.result = x
+        }
+    })
+    `;
+
+    const state = {};
+    const updated = run(code, { context: {}, state });
+    assert.equal(updated.result, 2);
+});

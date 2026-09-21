@@ -323,6 +323,9 @@ export class Lexer {
         if (type === TokenType.TRUE) val = true;
         if (type === TokenType.FALSE) val = false;
         if (type === TokenType.NULL) val = null;
+        if (type === TokenType.AND) val = '&&';
+        if (type === TokenType.OR) val = '||';
+        if (type === TokenType.NOT) val = '!';
 
         return this._token(type, val, raw, startLine, startColumn, startPos);
     }

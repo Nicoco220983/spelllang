@@ -194,12 +194,17 @@ export class Sanitizer {
             case 'BinaryExpression': {
                 const left = this.sanitizeExpression(expr.left);
                 const right = this.sanitizeExpression(expr.right);
-                return AST.createBinaryExpression(expr.operator, left, right, expr.loc);
+                let operator = expr.operator;
+                if (operator === 'and') operator = '&&';
+                if (operator === 'or') operator = '||';
+                return AST.createBinaryExpression(operator, left, right, expr.loc);
             }
 
             case 'UnaryExpression': {
                 const argument = this.sanitizeExpression(expr.argument);
-                return AST.createUnaryExpression(expr.operator, argument, expr.prefix, expr.loc);
+                let operator = expr.operator;
+                if (operator === 'not') operator = '!';
+                return AST.createUnaryExpression(operator, argument, expr.prefix, expr.loc);
             }
 
             case 'FunctionExpression':

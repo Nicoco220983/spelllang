@@ -135,12 +135,17 @@ return function runSpell(context, state) {
             case 'BinaryExpression': {
                 const left = this.transpileExpression(expr.left);
                 const right = this.transpileExpression(expr.right);
-                return `(${left} ${expr.operator} ${right})`;
+                let op = expr.operator;
+                if (op === 'and') op = '&&';
+                if (op === 'or') op = '||';
+                return `(${left} ${op} ${right})`;
             }
 
             case 'UnaryExpression': {
                 const arg = this.transpileExpression(expr.argument);
-                return `(${expr.operator}${arg})`;
+                let op = expr.operator;
+                if (op === 'not') op = '!';
+                return `(${op}${arg})`;
             }
 
             case 'CallExpression': {

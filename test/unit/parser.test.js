@@ -28,6 +28,12 @@ test('parser: silent tolerance for and / or / not', () => {
     assert.equal(res.success, true);
     const ifStmt = res.ast.body[0];
     assert.equal(ifStmt.type, 'IfStatement');
+    assert.equal(ifStmt.test.type, 'BinaryExpression');
+    assert.equal(ifStmt.test.operator, '||');
+    assert.equal(ifStmt.test.left.type, 'BinaryExpression');
+    assert.equal(ifStmt.test.left.operator, '&&');
+    assert.equal(ifStmt.test.left.left.type, 'UnaryExpression');
+    assert.equal(ifStmt.test.left.left.operator, '!');
 });
 
 test('parser: silent tolerance for null / nil / None', () => {
