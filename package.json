@@ -1,0 +1,28 @@
+{
+  "name": "spelllang",
+  "version": "0.1.0",
+  "description": "Minimalistic, safely sandboxed scripting language designed for LLM generation and visual block representation",
+  "type": "module",
+  "main": "./src/index.cjs",
+  "module": "./src/index.js",
+  "exports": {
+    ".": {
+      "import": "./src/index.js",
+      "require": "./src/index.cjs"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/unit/*.test.js",
+    "eval": "node test/eval/run_tests.js"
+  },
+  "keywords": [
+    "spelllang",
+    "scripting",
+    "sandbox",
+    "dsl",
+    "llm",
+    "visual-blocks"
+  ],
+  "author": "",
+  "license": "MIT"
+}

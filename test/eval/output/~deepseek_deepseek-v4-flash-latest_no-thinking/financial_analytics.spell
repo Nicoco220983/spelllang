@@ -1,0 +1,16 @@
+let readings = state.usage_history |> sortBy(identity) |> reverse() |> head(10)
+let violations = readings |> filter(isOver100) |> len()
+fn isOver100(value: Num) -> Bool {
+    value > 100
+}
+fn addPenalty(total: Num, value: Num) -> Num {
+    if value > 100 {
+        total + (value * 1.5)
+    } else {
+        total + value
+    }
+}
+let bill = readings |> reduce(50, addPenalty)
+if bill > 200 && violations > 2 {
+    notify("Alert: High usage detected", 1)
+}

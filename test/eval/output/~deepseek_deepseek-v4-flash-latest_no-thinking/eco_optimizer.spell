@@ -1,0 +1,13 @@
+let temperatureValues = getSensors('temperature') |> filter(sensor -> sensor.room == 'living_room') |> map(sensor -> sensor.value)
+let avgTemp = temperatureValues |> avg()
+let avgTempConstrained = avgTemp |> clamp(18, 30) |> round()
+let roomSensors = getSensors('humidity') |> filter(sensor -> sensor.room == 'living_room') |> map(sensor -> sensor.id)
+let allLivingRoomSensors = getSensors('temperature') |> filter(sensor -> sensor.room == 'living_room') |> map(sensor -> sensor.id) |> append(roomSensors)
+
+let weather = getWeather()
+let isSunny = weather.forecast |> contains('Sunny')
+
+if isSunny && avgTempConstrained > 25 {
+    allLivingRoomSensors |> filter(id -> id contains 'ac_unit') |> map(id -> setDeviceState(id, false))
+    state.last_avg_temp = avgTempConstrained
+}

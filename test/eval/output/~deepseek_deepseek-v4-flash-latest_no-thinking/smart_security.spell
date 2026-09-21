@@ -1,0 +1,17 @@
+let motion = getSensors('motion') |> filter(fn(s: Map) { s.value > 0 })
+
+if len(motion) > 0 {
+    if state.is_armed {
+        let triggered = motion |> first()
+        state.last_breach_room = triggered.room
+        state.last_incident = getTime()
+        notify("Intrusion detected in " + state.last_breach_room, 3)
+    } else {
+        let current_time = getTime()
+        state.unarmed_motion_events = state.unarmed_motion_events |> append(current_time)
+
+        if len(state.unarmed_motion_events) > 5 {
+            state.unarmed_motion_events = state.unarmed_motion_events |> tail(5)
+        }
+    }
+}

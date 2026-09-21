@@ -1,0 +1,17 @@
+[
+  {
+    "id": "eco_optimizer",
+    "name": "Eco-Optimization Pipeline",
+    "description": "We monitor sensor types ['temperature', 'humidity']. Query all sensors across these monitored types and focus on the 'living_room'. Calculate the average temperature, constrain the result between 18 and 30, and round it to the nearest integer. If the weather forecast text contains 'Sunny' and the rounded average exceeds 25, turn off all 'ac_unit' devices in that room and save the rounded average in `state.last_avg_temp`."
+  },
+  {
+    "id": "financial_analytics",
+    "name": "Penalty Calculation",
+    "description": "Given a list of usage numbers in `state.usage_history`: 1. Extract the 10 highest readings. 2. Count how many of these readings exceed 100. 3. Using a custom function, accumulate a total bill starting from an initial base fee of 50 by adding a 50% penalty on the value for readings above 100. 4. If the total bill is greater than 200 and there are more than 2 violations, send an alert notification with priority 1."
+  },
+  {
+    "id": "smart_security",
+    "name": "Conditional Security State",
+    "description": "Inspect motion sensors using `getSensors('motion')`. If any sensor has `value > 0`: when `state.is_armed` is true, find the first triggered sensor to record its room in `state.last_breach_room`, update `state.last_incident` with the current time from `getTime()`, and send an intrusion notification with priority 3. Otherwise, if `state.is_armed` is false, log the event by adding the current time to `state.unarmed_motion_events`, retaining only the 5 most recent entries."
+  }
+]
