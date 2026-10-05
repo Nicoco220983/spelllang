@@ -23,18 +23,27 @@ test('builtins: list operations', () => {
 
     assert.deepEqual(b.append([1, 2], 3), [1, 2, 3]);
     assert.deepEqual(b.reverse([1, 2, 3]), [3, 2, 1]);
+    assert.deepEqual(b.reverse(1, 2, 3), [3, 2, 1]);
 
     const users = [{ age: 30 }, { age: 20 }, { age: 25 }];
     assert.deepEqual(b.sortBy(users, u => u.age), [{ age: 20 }, { age: 25 }, { age: 30 }]);
 
     assert.equal(b.sum([10, 20, 30]), 60);
+    assert.equal(b.sum(10, 20, 30), 60);
     assert.equal(b.avg([10, 20, 30]), 20);
+    assert.equal(b.avg(10, 20, 30), 20);
     assert.equal(b.min([10, 5, 30]), 5);
+    assert.equal(b.min(10, 5, 30), 5);
+    assert.equal(b.min(10, 5), 5);
     assert.equal(b.max([10, 5, 30]), 30);
+    assert.equal(b.max(10, 5, 30), 30);
+    assert.equal(b.max(10, 5), 10);
 
     assert.equal(b.first([10, 20, 30]), 10);
+    assert.equal(b.first(10, 20, 30), 10);
     assert.equal(b.first([]), null);
     assert.equal(b.last([10, 20, 30]), 30);
+    assert.equal(b.last(10, 20, 30), 30);
     assert.equal(b.last([]), null);
 
     assert.deepEqual(b.head([1, 2, 3, 4, 5], 3), [1, 2, 3]);

@@ -123,12 +123,20 @@ export function append(list, item) {
     return [...list, item];
 }
 
+function toList(args) {
+    if (args.length === 1 && Array.isArray(args[0])) {
+        return args[0];
+    }
+    return args;
+}
+
 /**
  * Returns a reversed copy of a list.
- * @param {Array} list
+ * @param {...*} args List or elements to reverse
  * @returns {Array}
  */
-export function reverse(list) {
+export function reverse(...args) {
+    const list = toList(args);
     if (!Array.isArray(list)) return [];
     return [...list].reverse();
 }
@@ -153,64 +161,71 @@ export function sortBy(list, keyFn) {
 }
 
 /**
- * Sums numeric elements in a list.
- * @param {Array<number>} list
+ * Sums numeric elements in a list. Supports sum(list) and sum(a, b, ...).
+ * @param {...*} args
  * @returns {number}
  */
-export function sum(list) {
+export function sum(...args) {
+    const list = toList(args);
     if (!Array.isArray(list)) return 0;
     return list.reduce((acc, x) => acc + (typeof x === 'number' ? x : 0), 0);
 }
 
 /**
- * Calculates average of numeric elements in a list.
- * @param {Array<number>} list
+ * Calculates average of numeric elements in a list. Supports avg(list) and avg(a, b, ...).
+ * @param {...*} args
  * @returns {number}
  */
-export function avg(list) {
+export function avg(...args) {
+    const list = toList(args);
     if (!Array.isArray(list) || list.length === 0) return 0;
     return sum(list) / list.length;
 }
 
 /**
- * Minimum value in numeric list.
- * @param {Array<number>} list
+ * Minimum value in numeric list. Supports min(list) and min(a, b, ...).
+ * @param {...*} args
  * @returns {number}
  */
-export function min(list) {
+export function min(...args) {
+    const list = toList(args);
     if (!Array.isArray(list) || list.length === 0) return 0;
     return Math.min(...list);
 }
 
 /**
- * Maximum value in numeric list.
- * @param {Array<number>} list
+ * Maximum value in numeric list. Supports max(list) and max(a, b, ...).
+ * @param {...*} args
  * @returns {number}
  */
-export function max(list) {
+export function max(...args) {
+    const list = toList(args);
     if (!Array.isArray(list) || list.length === 0) return 0;
     return Math.max(...list);
 }
 
 /**
- * Returns the first element of a list, or null.
- * @param {Array} list
+ * Returns the first element of a list, or null. Supports first(list) and first(a, b, ...).
+ * @param {...*} args
  * @returns {*}
  */
-export function first(list) {
+export function first(...args) {
+    const list = toList(args);
     if (!Array.isArray(list) || list.length === 0) return null;
     return list[0];
 }
 
 /**
- * Returns the last element of a list, or null.
- * @param {Array} list
+ * Returns the last element of a list, or null. Supports last(list) and last(a, b, ...).
+ * @param {...*} args
  * @returns {*}
  */
-export function last(list) {
+export function last(...args) {
+    const list = toList(args);
     if (!Array.isArray(list) || list.length === 0) return null;
     return list[list.length - 1];
 }
+
 
 /**
  * Takes the first n elements of a list.
@@ -390,3 +405,13 @@ export const BUILTINS = {
 };
 
 export const BUILTIN_NAMES = new Set(Object.keys(BUILTINS));
+
+export const VARIADIC_LIST_BUILTINS = new Set([
+    'min',
+    'max',
+    'sum',
+    'avg',
+    'first',
+    'last',
+    'reverse'
+]);

@@ -79,3 +79,59 @@ test('sanitizer: prevents variable shadowing of built-ins and host functions', (
     assert.match(sanitized.errors[0].message, /Cannot declare variable 'filter'/);
     assert.match(sanitized.errors[1].message, /Cannot declare variable 'getSensors'/);
 });
+
+test('sanitizer: normalizes variadic calls to list builtins into array literals', () => {
+    const code = `
+    let x = min(a, b)
+    let y = max(1, 2, 3)
+    let z = sum(10, 20)
+    let p = a |> min(b)
+    let singleList = min([a, b])
+    `;
+    const parsed = parse(code);
+    assert.equal(parsed.success, true);
+
+    const sanitized = sanitize(parsed.ast);
+    assert.equal(sanitized.success, true);
+
+    // x = min([a, b])
+    const stmtX = sanitized.ast.body[0];
+    assert.equal(stmtX.init.type, 'CallExpression');
+    assert.equal(stmtX.init.callee.name, 'min');
+    assert.equal(stmtX.init.arguments.length, 1);
+    assert.equal(stmtX.init.arguments[0].type, 'ArrayLiteral');
+    assert.equal(stmtX.init.arguments[0].elements.length, 2);
+
+    // y = max([1, 2, 3])
+    const stmtY = sanitized.ast.body[1];
+    assert.equal(stmtY.init.type, 'CallExpression');
+    assert.equal(stmtY.init.callee.name, 'max');
+    assert.equal(stmtY.init.arguments.length, 1);
+    assert.equal(stmtY.init.arguments[0].type, 'ArrayLiteral');
+    assert.equal(stmtY.init.arguments[0].elements.length, 3);
+
+    // z = sum([10, 20])
+    const stmtZ = sanitized.ast.body[2];
+    assert.equal(stmtZ.init.type, 'CallExpression');
+    assert.equal(stmtZ.init.callee.name, 'sum');
+    assert.equal(stmtZ.init.arguments.length, 1);
+    assert.equal(stmtZ.init.arguments[0].type, 'ArrayLiteral');
+    assert.equal(stmtZ.init.arguments[0].elements.length, 2);
+
+    // p = min([a, b]) from pipeline desugaring
+    const stmtP = sanitized.ast.body[3];
+    assert.equal(stmtP.init.type, 'CallExpression');
+    assert.equal(stmtP.init.callee.name, 'min');
+    assert.equal(stmtP.init.arguments.length, 1);
+    assert.equal(stmtP.init.arguments[0].type, 'ArrayLiteral');
+    assert.equal(stmtP.init.arguments[0].elements.length, 2);
+
+    // singleList remains min([a, b]) with elements length 2 (not nested)
+    const stmtSingle = sanitized.ast.body[4];
+    assert.equal(stmtSingle.init.type, 'CallExpression');
+    assert.equal(stmtSingle.init.callee.name, 'min');
+    assert.equal(stmtSingle.init.arguments.length, 1);
+    assert.equal(stmtSingle.init.arguments[0].type, 'ArrayLiteral');
+    assert.equal(stmtSingle.init.arguments[0].elements.length, 2);
+});
+

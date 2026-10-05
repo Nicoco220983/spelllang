@@ -6,7 +6,7 @@ import { Lexer, TokenType } from './lexer.js';
 import { Parser } from './parser.js';
 import { Sanitizer } from './sanitizer.js';
 import { Transpiler } from './transpiler.js';
-import { BUILTINS, BUILTIN_NAMES } from './builtins.js';
+import { BUILTINS, BUILTIN_NAMES, VARIADIC_LIST_BUILTINS } from './builtins.js';
 import { generatePrompt } from './prompt.js';
 import * as AST from './ast.js';
 
@@ -18,6 +18,7 @@ export {
     Transpiler,
     BUILTINS,
     BUILTIN_NAMES,
+    VARIADIC_LIST_BUILTINS,
     generatePrompt,
     AST
 };

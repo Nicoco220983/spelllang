@@ -181,3 +181,26 @@ test('e2e: executes scripts with tolerant and / or / not operators', () => {
     const updated = run(code, { context: {}, state });
     assert.equal(updated.result, 2);
 });
+
+test('e2e: executes scripts with variadic calls to min, max, sum, and avg', () => {
+    const code = `
+    let a = 15
+    let b = 42
+    let c = 7
+
+    state.smallest = min(a, b, c)
+    state.largest = max(a, b)
+    state.total = sum(1, 2, 3, 4)
+    state.mean = avg(10, 20)
+    state.pipedMin = a |> min(b)
+    `;
+
+    const state = {};
+    const updated = run(code, { context: {}, state });
+    assert.equal(updated.smallest, 7);
+    assert.equal(updated.largest, 42);
+    assert.equal(updated.total, 10);
+    assert.equal(updated.mean, 15);
+    assert.equal(updated.pipedMin, 15);
+});
+

@@ -52,6 +52,7 @@ To prevent LLM generation failures caused by pre-training priors, the parser sil
 | `fn(...) -> Type` | `fn(...)` | Return type annotations are silently discarded (types are inferred). |
 | `x -> expr` or `x => expr` | `fn(x: Any) { expr }` | Arrow lambda shorthand desugars to standard `fn`. |
 | `\|> .prop` | `map.prop` | Chained property access inside pipelines is accepted. |
+| `min(a, b)`, `max(a, b)`, `sum(a, b)` | `min([a, b])`, `max([a, b])`, `sum([a, b])` | Variadic arguments passed to list aggregate functions are wrapped into a list. |
 
 ### Visual Block Isomorphism
 The **Sanitizer / AST Normalizer** rewrites accepted dialect variants into a single canonical AST representation. This guarantees that visual block editors (Blockly/Scratch) only need one 1:1 block mapping per concept.

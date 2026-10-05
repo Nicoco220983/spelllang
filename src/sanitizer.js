@@ -4,7 +4,7 @@
  */
 
 import * as AST from './ast.js';
-import { BUILTIN_NAMES } from './builtins.js';
+import { BUILTIN_NAMES, VARIADIC_LIST_BUILTINS } from './builtins.js';
 
 export class Sanitizer {
     /**
@@ -182,7 +182,7 @@ export class Sanitizer {
             case 'CallExpression': {
                 const callee = this.sanitizeExpression(expr.callee);
                 const args = expr.arguments.map(arg => this.sanitizeExpression(arg));
-                return AST.createCallExpression(callee, args, expr.loc);
+                return this.createNormalizedCallExpression(callee, args, expr.loc);
             }
 
             case 'MemberExpression': {
@@ -228,6 +228,13 @@ export class Sanitizer {
         }
     }
 
+    createNormalizedCallExpression(callee, args, loc) {
+        if (callee.type === 'Identifier' && VARIADIC_LIST_BUILTINS.has(callee.name) && args.length > 1) {
+            args = [AST.createArrayLiteral(args, loc)];
+        }
+        return AST.createCallExpression(callee, args, loc);
+    }
+
     desugarPipeline(pipelineNode) {
         const left = this.sanitizeExpression(pipelineNode.left);
         const right = pipelineNode.right;
@@ -249,13 +256,13 @@ export class Sanitizer {
                 args.unshift(left);
             }
 
-            return AST.createCallExpression(callee, args, pipelineNode.loc);
+            return this.createNormalizedCallExpression(callee, args, pipelineNode.loc);
         }
 
         // Case 3: `left |> func` (bare identifier function call: `list |> last`)
         if (right.type === 'Identifier') {
             const callee = this.sanitizeExpression(right);
-            return AST.createCallExpression(callee, [left], pipelineNode.loc);
+            return this.createNormalizedCallExpression(callee, [left], pipelineNode.loc);
         }
 
         // Case 4: `left |> fn(x) { ... }` (lambda pipe)
